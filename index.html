@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0e0d0b">
-<title>LiquorPOS — Web POS &amp; Job Management</title>
+<title>MOBIBIZ — Web POS &amp; Job Management</title>
 <style>
 /* ============================================================
    THEME TOKENS — gold / wine palette
@@ -379,8 +379,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
     <!-- LEFT: brand hero -->
     <div class="auth-hero">
-      <div class="brand-mark" id="loginLogo">LB</div>
-      <h1>Welcome to <span id="loginBiz">LiquorPOS</span></h1>
+      <div class="brand-mark" id="loginLogo">MB</div>
+      <h1>Welcome to <span id="loginBiz">MOBIBIZ</span></h1>
       <p>Modern point of sale &amp; job management built for busy liquor retail — sales, debts, cash flow and reporting in one place.</p>
       <ul class="auth-features">
         <li>Lightning-fast sales entry</li>
@@ -480,9 +480,9 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
   <header class="topbar">
     <button class="hamburger" id="menuBtn" aria-label="Menu"><span></span><span></span><span></span></button>
     <div class="brand">
-      <div class="mark" id="topLogo">LB</div>
+      <div class="mark" id="topLogo">MB</div>
       <div class="txt">
-        <b id="topBiz">LiquorPOS</b>
+        <b id="topBiz">MOBIBIZ</b>
         <small id="topTag">Premium Wines &amp; Spirits</small>
       </div>
       <button class="brand-edit hidden" id="renameBizBtn" title="Rename business"></button>
@@ -505,8 +505,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
     <div class="drawer-head">
-      <div class="mark" id="drawerLogo">LB</div>
-      <div><b id="drawerBiz">LiquorPOS</b><small>Menu</small></div>
+      <div class="mark" id="drawerLogo">MB</div>
+      <div><b id="drawerBiz">MOBIBIZ</b><small>Menu</small></div>
     </div>
     <nav id="navList"></nav>
     <div class="drawer-foot">
@@ -689,7 +689,7 @@ function storeKey(){
 function seedDB(){
   return {
     settings:{
-      businessName:'My Business',
+      businessName:'MOBIBIZ',
       tagline:'Point of Sale & Job Management',
       logo:'', phone:'', email:'', address:'',
       currency:'KES', theme:'dark',
@@ -812,7 +812,7 @@ const BILLING = {
   pricePerMonth: 1, // Sandbox
   currency:      'KES',
   paybill:       '174379', // Sandbox
-  accountNo:     'LIQUORPOS',
+  accountNo:     'MOBIBIZ',
   supportPhone:  '+254 700 123 456',
   checkoutUrl:   '',
   payEndpoint:   '/api/mpesa/stkpush' 
@@ -1232,7 +1232,7 @@ async function signUpPublic({ name, username, phone, email, password, remember }
     }
 
     const orgId = 'org_' + uid().slice(0,10) + '_' + newUid.slice(0,6);
-    const businessName = name.trim().split(/\s+/)[0] + "'s Business";
+    const businessName = 'MOBIBIZ';
 
     try{
       await setDoc(doc(db, 'orgs', orgId), {
@@ -1358,11 +1358,11 @@ function toggleTheme(){
 function logoHTML(){
   return DB.settings.logo
     ? `<img src="${DB.settings.logo}" alt="logo">`
-    : (initials(DB.settings.businessName) || 'LB');
+    : (initials(DB.settings.businessName) || 'MB');
 }
 function paintBranding(){
   const s = DB.settings;
-  const biz = s.businessName || 'LiquorPOS';
+  const biz = s.businessName || 'MOBIBIZ';
   [['#topBiz',biz],['#drawerBiz',biz],['#loginBiz',biz],['#topTag',s.tagline || 'Point of Sale']]
     .forEach(([sel, txt]) => { const el = $(sel); if(el) el.textContent = txt; });
   ['#topLogo','#drawerLogo','#loginLogo'].forEach(sel => {
@@ -3520,7 +3520,7 @@ function bindSettings(){
   /* ---------- business profile ---------- */
   $('#bizForm').addEventListener('submit', e => {
     e.preventDefault();
-    DB.settings.businessName    = $('#setName').value.trim() || 'My Business';
+    DB.settings.businessName    = $('#setName').value.trim() || 'MOBIBIZ';
     DB.settings.tagline         = $('#setTag').value.trim();
     DB.settings.phone           = $('#setPhone').value.trim();
     DB.settings.email           = $('#setEmail').value.trim();
