@@ -6,13 +6,520 @@
 <meta name="theme-color" content="#0e0d0b">
 <title>LiquorPOS — Web POS &amp; Job Management</title>
 <style>
-/* [KEEP ALL YOUR EXISTING CSS HERE - IT REMAINS UNCHANGED] */
-/* For brevity in this response, assume your entire <style> block from the previous file is pasted here. */
+/* ============================================================
+   THEME TOKENS — gold / wine palette
+   ============================================================ */
+:root{
+  --gold:#d9a441; --gold-2:#f2cd7c; --gold-3:#a87a22;
+  --wine:#7d2537; --wine-2:#a13348;
+  --bg:#0e0d0b; --surface:#171512; --surface2:#201d18; --surface3:#2a2620;
+  --border:#332e26; --text:#f4efe5; --muted:#a79c88;
+  --primary:#d9a441; --primary-ink:#241a05;
+  --success:#3fa66a; --danger:#e0574f; --warn:#e0a33a; --info:#4a90d9;
+  --radius:14px; --radius-sm:10px;
+  --shadow:0 10px 34px rgba(0,0,0,.45);
+  --shadow-sm:0 4px 14px rgba(0,0,0,.3);
+}
+html[data-theme="light"]{
+  --bg:#f5f2ec; --surface:#ffffff; --surface2:#f3efe6; --surface3:#e9e3d6;
+  --border:#ded6c6; --text:#241f16; --muted:#6d6455;
+  --primary:#b8862b; --primary-ink:#ffffff;
+  --shadow:0 10px 30px rgba(90,68,20,.14);
+  --shadow-sm:0 4px 14px rgba(90,68,20,.10);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-size:14.5px;line-height:1.5;overscroll-behavior-y:none;
+  transition:background .25s,color .25s;
+}
+h1,h2,h3,h4{margin:0;font-weight:700;letter-spacing:-.01em}
+a{color:var(--primary);text-decoration:none}
+button,input,select,textarea{font:inherit;color:inherit}
+input[type="checkbox"],input[type="radio"]{width:auto;accent-color:var(--gold)}
+.hidden{display:none !important}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:9px}
+::-webkit-scrollbar-track{background:transparent}
+
+.ico{width:20px;height:20px;flex:0 0 auto}
+.ico.sm{width:16px;height:16px}
+
+/* ================= AUTH LANDING (sign in / sign up) ================= */
+.login-screen{
+  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:
+    radial-gradient(900px 500px at 12% -10%, rgba(217,164,65,.20), transparent 60%),
+    radial-gradient(800px 500px at 100% 110%, rgba(125,37,55,.30), transparent 60%),
+    var(--bg);
+  z-index:200;overflow-y:auto;
+}
+.landing-auth{
+  display:grid;grid-template-columns:1.1fr 1fr;gap:44px;
+  width:100%;max-width:1100px;align-items:center;
+}
+.auth-hero{padding:20px 10px}
+.auth-hero .brand-mark{
+  width:72px;height:72px;border-radius:20px;display:grid;place-items:center;
+  font-weight:800;font-size:26px;
+  background:linear-gradient(140deg,var(--gold-2),var(--gold),var(--gold-3));color:#231803;
+  box-shadow:0 8px 24px rgba(217,164,65,.35);margin-bottom:22px;overflow:hidden;
+}
+.auth-hero .brand-mark img{width:100%;height:100%;object-fit:cover}
+.auth-hero h1{font-size:clamp(28px,3.6vw,40px);line-height:1.1;margin-bottom:14px;letter-spacing:-.02em}
+.auth-hero h1 span{
+  background:linear-gradient(120deg,var(--gold-2),var(--gold),var(--wine-2));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.auth-hero p{color:var(--muted);font-size:15px;margin:0 0 26px;max-width:440px;line-height:1.6}
+.auth-features{list-style:none;padding:0;margin:0;display:grid;gap:11px}
+.auth-features li{display:flex;align-items:center;gap:11px;color:var(--muted);font-size:13.5px}
+.auth-features li::before{
+  content:"";width:6px;height:6px;border-radius:50%;
+  background:var(--gold);flex-shrink:0;box-shadow:0 0 8px rgba(217,164,65,.5);
+}
+.auth-card{
+  width:100%;max-width:440px;margin:0 auto;background:var(--surface);
+  border:1px solid var(--border);border-radius:20px;padding:26px 24px;
+  box-shadow:var(--shadow);
+}
+.auth-tabs{
+  display:flex;background:var(--surface2);border-radius:12px;padding:5px;
+  margin-bottom:20px;gap:4px;
+}
+.auth-tabs button{
+  flex:1;padding:10px 14px;border-radius:9px;border:none;background:transparent;
+  color:var(--muted);font-weight:700;font-size:13px;cursor:pointer;transition:.18s;
+}
+.auth-tabs button.active{background:var(--surface);color:var(--gold);box-shadow:var(--shadow-sm)}
+.auth-form .field:last-of-type{margin-bottom:16px}
+@media(max-width:900px){
+  .landing-auth{grid-template-columns:1fr;gap:26px;max-width:460px}
+  .auth-hero{text-align:center;padding:6px 10px}
+  .auth-hero p{margin-left:auto;margin-right:auto}
+  .auth-hero .brand-mark{margin-left:auto;margin-right:auto}
+  .auth-features{display:none}
+}
+@media(max-width:600px){
+  .login-screen{padding:14px}
+  .auth-card{padding:22px 18px;border-radius:16px}
+}
+
+/* LOGIN FORM ATOMS */
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+input,select,textarea{
+  width:100%;padding:11px 13px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--surface2);color:var(--text);
+  outline:none;transition:.16s;font-size:14px;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(217,164,65,.14);background:var(--surface)}
+input::placeholder{color:var(--muted);opacity:.7}
+select{appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a79c88' stroke-width='2.5' stroke-linecap='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat:no-repeat;background-position:right 12px center;padding-right:34px}
+.row{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+@media(max-width:520px){.row{grid-template-columns:1fr}}
+.check-row{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);margin-bottom:14px;cursor:pointer}
+
+.login-hint{
+  margin-top:18px;padding:11px 13px;border-radius:var(--radius-sm);background:var(--surface2);
+  border:1px dashed var(--border);font-size:12px;color:var(--muted);line-height:1.7;
+}
+.login-hint b{color:var(--gold)}
+.login-status{
+  margin-top:14px;padding:10px 12px;border-radius:10px;font-size:12.5px;font-weight:600;
+  background:var(--surface2);border:1px solid var(--border);color:var(--muted);
+  display:flex;align-items:center;gap:8px;
+}
+.login-status.err{color:var(--danger);border-color:rgba(224,87,79,.4)}
+.login-status.ok{color:var(--success);border-color:rgba(63,166,106,.4)}
+.spinner{
+  width:14px;height:14px;border-radius:50%;border:2px solid rgba(217,164,65,.3);
+  border-top-color:var(--gold);animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ================= APP SHELL ================= */
+.app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+.topbar{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:60;flex:0 0 auto;
+  padding-top:calc(10px + env(safe-area-inset-top));
+}
+.hamburger{
+  width:42px;height:42px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);
+  display:grid;place-items:center;cursor:pointer;transition:.18s;
+}
+.hamburger:active{transform:scale(.94)}
+.hamburger span{display:block;width:19px;height:2px;background:var(--text);border-radius:2px;margin:2.2px 0;transition:.25s}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand .mark{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-weight:800;font-size:14px;
+  background:linear-gradient(140deg,var(--gold-2),var(--gold));color:#231803;overflow:hidden;flex:0 0 auto}
+.brand .mark img{width:100%;height:100%;object-fit:cover}
+.brand .txt{min-width:0}
+.brand .txt b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
+.brand .txt small{color:var(--muted);font-size:11px}
+.brand-edit{
+  width:32px;height:32px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);
+  display:grid;place-items:center;cursor:pointer;color:var(--muted);transition:.18s;flex:0 0 auto;
+}
+.brand-edit:hover{border-color:var(--gold);color:var(--gold)}
+.spacer{flex:1}
+.icon-btn{
+  width:40px;height:40px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);
+  display:grid;place-items:center;cursor:pointer;transition:.18s;color:var(--text)
+}
+.icon-btn:hover{border-color:var(--gold);color:var(--gold)}
+.user-chip{
+  display:flex;align-items:center;gap:9px;padding:5px 12px 5px 5px;border-radius:30px;
+  background:var(--surface2);border:1px solid var(--border);cursor:pointer;
+}
+.user-chip .av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;
+  background:linear-gradient(140deg,var(--wine-2),var(--wine));color:#fff}
+.user-chip .nm{font-size:12.5px;font-weight:600;line-height:1.15}
+.user-chip .rl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+@media(max-width:640px){.user-chip .meta{display:none}.brand .txt small{display:none}}
+
+/* ================= DRAWER ================= */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:80;opacity:0;pointer-events:none;transition:.25s}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{
+  position:fixed;top:0;left:0;bottom:0;width:280px;max-width:84vw;z-index:90;
+  background:var(--surface);border-right:1px solid var(--border);
+  transform:translateX(-102%);transition:transform .28s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;box-shadow:var(--shadow);
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
+}
+.drawer.on{transform:translateX(0)}
+.drawer-head{padding:18px 18px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px}
+.drawer-head .mark{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:800;
+  background:linear-gradient(140deg,var(--gold-2),var(--gold));color:#231803;overflow:hidden}
+.drawer-head .mark img{width:100%;height:100%;object-fit:cover}
+.drawer-head b{display:block;font-size:14px}
+.drawer-head small{color:var(--muted);font-size:11px}
+.drawer nav{padding:10px;overflow-y:auto;flex:1}
+.nav-item{
+  display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:12px;cursor:pointer;
+  color:var(--muted);font-weight:600;font-size:13.5px;transition:.16s;margin-bottom:2px;border:1px solid transparent;
+}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:linear-gradient(90deg,rgba(217,164,65,.18),transparent);color:var(--gold);border-color:rgba(217,164,65,.28)}
+.nav-item .badge{margin-left:auto;background:var(--danger);color:#fff;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:700}
+.nav-item.locked{opacity:.4;cursor:not-allowed}
+.drawer-foot{padding:12px;border-top:1px solid var(--border)}
+
+/* ================= VIEW ================= */
+.view{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.page-head h2{font-size:21px}
+.page-head p{margin:3px 0 0;color:var(--muted);font-size:12.5px}
+
+/* ================= CARDS / GRID ================= */
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;box-shadow:var(--shadow-sm);
+}
+.card h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h3 .ico{color:var(--gold)}
+.kpi{position:relative;overflow:hidden}
+.kpi .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:600}
+.kpi .val{font-size:25px;font-weight:800;margin-top:6px;letter-spacing:-.02em}
+.kpi .sub{font-size:11.5px;color:var(--muted);margin-top:4px}
+.kpi .glyph{position:absolute;right:-8px;top:-8px;opacity:.08;width:76px;height:76px}
+.kpi .glyph svg{width:100%;height:100%}
+.kpi.gold .val{color:var(--gold)}
+.kpi.red .val{color:var(--danger)}
+.kpi.green .val{color:var(--success)}
+.kpi.blue .val{color:var(--info)}
+.kpi.amber .val{color:var(--warn)}
+
+/* ================= FORMS ================= */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:11px 18px;border-radius:var(--radius-sm);border:1px solid transparent;
+  font-weight:700;font-size:13.5px;cursor:pointer;transition:.16s;background:var(--surface3);color:var(--text);
+  white-space:nowrap;
+}
+.btn:hover{filter:brightness(1.12)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.55;cursor:not-allowed;filter:none}
+.btn.primary{background:linear-gradient(135deg,var(--gold-2),var(--gold));color:var(--primary-ink);box-shadow:0 4px 16px rgba(217,164,65,.28)}
+.btn.ghost{background:transparent;border-color:var(--border);color:var(--text)}
+.btn.danger{background:rgba(224,87,79,.14);color:var(--danger);border-color:rgba(224,87,79,.3)}
+.btn.sm{padding:7px 12px;font-size:12px;border-radius:9px}
+.btn.block{width:100%}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ================= TABLE ================= */
+.table-wrap{overflow-x:auto;border-radius:var(--radius-sm);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+th{
+  text-align:left;padding:11px 13px;background:var(--surface2);color:var(--muted);
+  font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;white-space:nowrap;
+  position:sticky;top:0;
+}
+td{padding:11px 13px;border-top:1px solid var(--border);vertical-align:middle}
+tbody tr{transition:.14s}
+tbody tr:hover{background:var(--surface2)}
+tfoot td{background:var(--surface2);font-weight:700}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:13px}
+.empty svg{width:38px;height:38px;opacity:.35;margin-bottom:8px}
+
+/* ================= PILLS ================= */
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+.pill.green{background:rgba(63,166,106,.16);color:var(--success)}
+.pill.red{background:rgba(224,87,79,.16);color:var(--danger)}
+.pill.amber{background:rgba(224,163,58,.16);color:var(--warn)}
+.pill.blue{background:rgba(74,144,217,.16);color:var(--info)}
+.pill.grey{background:var(--surface3);color:var(--muted)}
+.pill.gold{background:rgba(217,164,65,.16);color:var(--gold)}
+
+/* ================= TABS ================= */
+.tabs{display:flex;gap:6px;background:var(--surface2);padding:5px;border-radius:12px;margin-bottom:16px;overflow-x:auto}
+.tab{
+  flex:1;padding:9px 14px;border-radius:9px;text-align:center;cursor:pointer;font-weight:700;
+  font-size:12.5px;color:var(--muted);transition:.18s;white-space:nowrap;border:none;background:transparent;
+}
+.tab.active{background:var(--surface);color:var(--gold);box-shadow:var(--shadow-sm)}
+
+/* ================= MISC ================= */
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12.5px}
+.bar-row .nm{width:130px;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.bar-track{flex:1;height:9px;background:var(--surface3);border-radius:9px;overflow:hidden;min-width:60px}
+.bar-fill{height:100%;border-radius:9px;background:linear-gradient(90deg,var(--gold-3),var(--gold-2));transition:width .5s}
+.bar-fill.red{background:linear-gradient(90deg,#7d2537,#e0574f)}
+.bar-fill.green{background:linear-gradient(90deg,#1f6b45,#3fa66a)}
+.bar-row .vl{width:78px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700;flex:0 0 auto}
+
+.toast{
+  position:fixed;left:50%;bottom:26px;transform:translate(-50%,140%);
+  background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--gold);
+  padding:13px 20px;border-radius:12px;box-shadow:var(--shadow);z-index:300;
+  font-size:13px;font-weight:600;transition:transform .34s cubic-bezier(.2,1.2,.4,1);max-width:90vw;
+}
+.toast.on{transform:translate(-50%,0)}
+.toast.err{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--success)}
+
+/* ================= SUBSCRIPTION BANNER ================= */
+.sub-banner{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:11px 15px;border-radius:12px;margin-bottom:16px;font-size:12.5px;font-weight:600;
+  border:1px solid var(--border);background:var(--surface2);
+}
+.sub-banner.warn{background:rgba(224,163,58,.12);border-color:rgba(224,163,58,.35);color:var(--warn)}
+.sub-banner.danger{background:rgba(224,87,79,.12);border-color:rgba(224,87,79,.35);color:var(--danger)}
+.sub-banner .spacer{flex:1}
+
+/* ================= LANDING (in-app) ================= */
+.hero{
+  border-radius:22px;padding:44px 30px;position:relative;overflow:hidden;margin-bottom:20px;
+  background:
+    radial-gradient(700px 400px at 85% 0%, rgba(217,164,65,.22), transparent 62%),
+    radial-gradient(600px 400px at 0% 100%, rgba(125,37,55,.35), transparent 65%),
+    var(--surface);
+  border:1px solid var(--border);
+}
+.hero-inner{position:relative;z-index:2;max-width:660px}
+.hero h1{font-size:clamp(26px,5vw,42px);line-height:1.1;margin-bottom:12px}
+.hero h1 span{background:linear-gradient(120deg,var(--gold-2),var(--gold),var(--wine-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--muted);font-size:15px;margin:0 0 24px;max-width:520px}
+.hero-logo{width:84px;height:84px;border-radius:22px;display:grid;place-items:center;font-size:32px;font-weight:800;
+  background:linear-gradient(140deg,var(--gold-2),var(--gold));color:#231803;margin-bottom:20px;overflow:hidden;
+  box-shadow:0 12px 34px rgba(217,164,65,.3)}
+.hero-logo img{width:100%;height:100%;object-fit:cover}
+.feature{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;transition:.2s}
+.feature:hover{border-color:rgba(217,164,65,.4);transform:translateY(-2px)}
+.feature .fi{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:rgba(217,164,65,.13);color:var(--gold);margin-bottom:12px}
+.feature b{display:block;margin-bottom:5px;font-size:14px}
+.feature p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.6}
+.landing-foot{text-align:center;color:var(--muted);font-size:12px;padding:26px 0 8px}
+
+/* ================= SEARCH BAR ================= */
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.search-wrap{position:relative;flex:1;min-width:180px}
+.search-wrap .ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);width:17px;height:17px}
+.search-wrap input{padding-left:38px}
+
+/* ================= RESPONSIVE ================= */
+@media(max-width:760px){
+  .view{padding:14px}
+  .card{padding:14px}
+  .hero{padding:30px 20px;border-radius:18px}
+  .kpi .val{font-size:21px}
+  table{font-size:12.5px}
+  th,td{padding:9px 10px}
+}
+@media(min-width:1100px){
+  .drawer{transform:translateX(0);box-shadow:none}
+  .scrim{display:none}
+  .app{padding-left:280px}
+  .hamburger{display:none}
+  .topbar{padding-left:20px}
+  .drawer-close{display:none}
+}
+.drawer-close{position:absolute;top:14px;right:12px}
+@media print{body{background:#fff}}
 </style>
 </head>
 <body>
-<!-- [KEEP ALL YOUR EXISTING HTML BODY HERE - IT REMAINS UNCHANGED] -->
-<!-- Assume your login screen, app shell, and navigation are here. -->
+
+<!-- ===================== AUTH LANDING ===================== -->
+<div id="loginScreen" class="login-screen">
+  <div class="landing-auth">
+
+    <!-- LEFT: brand hero -->
+    <div class="auth-hero">
+      <div class="brand-mark" id="loginLogo">LB</div>
+      <h1>Welcome to <span id="loginBiz">LiquorPOS</span></h1>
+      <p>Modern point of sale &amp; job management built for busy liquor retail — sales, debts, cash flow and reporting in one place.</p>
+      <ul class="auth-features">
+        <li>Lightning-fast sales entry</li>
+        <li>Customer ledger &amp; debt tracking</li>
+        <li>Cash flow &amp; expense control</li>
+        <li>Stock reconciliation</li>
+        <li>Powerful reporting</li>
+      </ul>
+    </div>
+
+    <!-- RIGHT: auth card -->
+    <div class="auth-card">
+      <div class="auth-tabs" id="authTabs">
+        <button type="button" class="active" data-auth-mode="signin">Sign In</button>
+        <button type="button" data-auth-mode="signup">Sign Up</button>
+      </div>
+
+      <!-- SIGN IN -->
+      <form id="signinForm" class="auth-form">
+        <div class="field">
+          <label for="siUser">Username or Email</label>
+          <input id="siUser" type="text" autocomplete="username"
+                 placeholder="username or you@gmail.com"
+                 autocapitalize="none" autocorrect="off" spellcheck="false" required>
+        </div>
+        <div class="field">
+          <label for="siPass">Password</label>
+          <div style="position:relative">
+            <input id="siPass" type="password" autocomplete="current-password"
+                   placeholder="••••••••" required style="padding-right:46px">
+            <button type="button" id="togglePass" aria-label="Show password"
+              style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:34px;height:34px;
+                     border-radius:9px;border:none;background:transparent;color:var(--muted);
+                     display:grid;place-items:center;cursor:pointer">
+              <svg class="ico sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <label class="check-row" style="margin-bottom:16px">
+          <input type="checkbox" id="siRemember" checked>
+          Keep me signed in
+        </label>
+        <button type="submit" class="btn primary block" id="signinBtn">Sign In</button>
+        <button type="button" class="btn ghost sm block" id="forgotBtn" style="margin-top:10px">
+          Forgot password?
+        </button>
+      </form>
+
+      <!-- SIGN UP -->
+      <form id="signupForm" class="auth-form hidden">
+        <div class="field">
+          <label for="suName">Full Name *</label>
+          <input id="suName" type="text" required placeholder="e.g. Jane Wanjiku" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="suUser">Username *</label>
+          <input id="suUser" type="text" required placeholder="e.g. jane"
+                 autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="suPhone">Phone Number *</label>
+          <input id="suPhone" type="tel" required placeholder="+254 7XX XXX XXX" autocomplete="tel" inputmode="tel">
+        </div>
+        <div class="field">
+          <label for="suEmail">Email Address *</label>
+          <input id="suEmail" type="email" required placeholder="you@gmail.com"
+                 autocapitalize="none" spellcheck="false" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="suPass">Password *</label>
+          <input id="suPass" type="password" required placeholder="At least 6 characters"
+                 autocomplete="new-password">
+        </div>
+        <label class="check-row" style="margin-bottom:16px">
+          <input type="checkbox" id="suRemember" checked>
+          Keep me signed in
+        </label>
+        <p style="color:var(--muted);font-size:11.5px;margin:0 0 12px;line-height:1.6">
+          Signing up creates <b>your own organization</b> and makes you its administrator.
+          You can invite staff later from <b>Settings → User Accounts</b>.
+        </p>
+        <button type="submit" class="btn primary block" id="signupBtn">Create Account</button>
+      </form>
+
+      <div id="loginStatus" class="login-status hidden"></div>
+      <div class="login-hint" id="loginHint"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <button class="hamburger" id="menuBtn" aria-label="Menu"><span></span><span></span><span></span></button>
+    <div class="brand">
+      <div class="mark" id="topLogo">LB</div>
+      <div class="txt">
+        <b id="topBiz">LiquorPOS</b>
+        <small id="topTag">Premium Wines &amp; Spirits</small>
+      </div>
+      <button class="brand-edit hidden" id="renameBizBtn" title="Rename business"></button>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" title="Toggle theme">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <div class="user-chip" id="userChip">
+      <div class="av" id="userAv">A</div>
+      <div class="meta">
+        <div class="nm" id="userName">Admin</div>
+        <div class="rl" id="userRole">Administrator</div>
+      </div>
+    </div>
+  </header>
+
+  <aside class="drawer" id="drawer">
+    <button class="icon-btn drawer-close" id="drawerClose" aria-label="Close">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="drawer-head">
+      <div class="mark" id="drawerLogo">LB</div>
+      <div><b id="drawerBiz">LiquorPOS</b><small>Menu</small></div>
+    </div>
+    <nav id="navList"></nav>
+    <div class="drawer-foot">
+      <button class="btn ghost block" id="logoutBtn">
+        <svg class="ico sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="view" id="view"></main>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -182,7 +689,7 @@ function storeKey(){
 function seedDB(){
   return {
     settings:{
-      businessName:'MOBIBIZ',
+      businessName:'My Business',
       tagline:'Point of Sale & Job Management',
       logo:'', phone:'', email:'', address:'',
       currency:'KES', theme:'dark',
@@ -308,7 +815,7 @@ const BILLING = {
   accountNo:     'LIQUORPOS',
   supportPhone:  '+254 700 123 456',
   checkoutUrl:   '',
-  payEndpoint:   '/api/mpesa/stkpush' // <-- UPDATED
+  payEndpoint:   '/api/mpesa/stkpush' 
 };
 
 let SUB = null;
@@ -3013,7 +3520,7 @@ function bindSettings(){
   /* ---------- business profile ---------- */
   $('#bizForm').addEventListener('submit', e => {
     e.preventDefault();
-    DB.settings.businessName    = $('#setName').value.trim() || 'MOBIBIZ';
+    DB.settings.businessName    = $('#setName').value.trim() || 'My Business';
     DB.settings.tagline         = $('#setTag').value.trim();
     DB.settings.phone           = $('#setPhone').value.trim();
     DB.settings.email           = $('#setEmail').value.trim();
