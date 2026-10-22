@@ -1,0 +1,13 @@
+{
+  "name": "liquorpos-saas",
+  "version": "1.0.0",
+  "description": "LiquorPOS Multi-Tenant SaaS",
+  "main": "index.html",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "firebase-admin": "^12.2.0"
+  }
+}

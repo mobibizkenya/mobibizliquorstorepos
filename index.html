@@ -1,0 +1,3517 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0d0b">
+<title>LiquorPOS — Web POS &amp; Job Management</title>
+<style>
+/* [KEEP ALL YOUR EXISTING CSS HERE - IT REMAINS UNCHANGED] */
+/* For brevity in this response, assume your entire <style> block from the previous file is pasted here. */
+</style>
+</head>
+<body>
+<!-- [KEEP ALL YOUR EXISTING HTML BODY HERE - IT REMAINS UNCHANGED] -->
+<!-- Assume your login screen, app shell, and navigation are here. -->
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+/* ============================================================
+   FIREBASE SETUP — Connected to liquor-store-60d40
+   ============================================================ */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-analytics.js";
+import {
+  getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+  setPersistence, browserLocalPersistence, browserSessionPersistence,
+  createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile, deleteUser as deleteAuthUser
+} from "https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js";
+import {
+  getFirestore, collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc
+} from "https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAOTyuht13PmtS7WRMVhhtKUYYZD30mGag",
+  authDomain: "liquor-store-60d40.firebaseapp.com",
+  projectId: "liquor-store-60d40",
+  storageBucket: "liquor-store-60d40.firebasestorage.app",
+  messagingSenderId: "997135733729",
+  appId: "1:997135733729:web:f13fb19721d8d52c1678a0",
+  measurementId: "G-8YZPH7GQGQ"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+try { getAnalytics(firebaseApp); } catch(_){ }
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+
+let _secondaryApp = null;
+function getSecondaryAuth(){
+  if(!_secondaryApp) _secondaryApp = initializeApp(firebaseConfig, 'pos-user-admin');
+  return getAuth(_secondaryApp);
+}
+
+/* ============================================================
+   0. GENERIC HELPERS
+   ============================================================ */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+const round2 = n => Math.round(num(n) * 100) / 100;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0,10); };
+
+function money(n){
+  const cur = (DB && DB.settings && DB.settings.currency) || 'KES';
+  return cur + ' ' + num(n).toLocaleString('en-KE', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function moneyShort(n){
+  const cur = (DB && DB.settings && DB.settings.currency) || 'KES';
+  return cur + ' ' + num(n).toLocaleString('en-KE', {maximumFractionDigits:0});
+}
+function fmtDate(d){
+  if(!d) return '—';
+  const dt = new Date(String(d).length === 10 ? d + 'T00:00:00' : d);
+  if(isNaN(dt)) return d;
+  return dt.toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'});
+}
+function fmtDateTime(d){
+  if(!d) return '—';
+  const dt = new Date(d);
+  if(isNaN(dt)) return d;
+  return dt.toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'});
+}
+function initials(name){
+  return (name || '?').trim().split(/\s+/).slice(0,2).map(w => w[0]).join('').toUpperCase();
+}
+function toast(msg, type = ''){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast on ' + type;
+  clearTimeout(t._t);
+  t._t = setTimeout(() => { t.className = 'toast ' + type; }, 2600);
+}
+function download(blob, filename){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function setLoginStatus(msg, kind = ''){
+  const el = $('#loginStatus');
+  if(!el) return;
+  if(!msg){ el.className = 'login-status hidden'; el.innerHTML = ''; return; }
+  el.className = 'login-status ' + kind;
+  el.innerHTML = kind === 'loading'
+    ? `<span class="spinner"></span><span>${esc(msg)}</span>`
+    : `<span>${esc(msg)}</span>`;
+}
+function friendlyAuthError(err){
+  const map = {
+    'auth/invalid-email':'Invalid email address',
+    'auth/user-disabled':'This account has been disabled',
+    'auth/user-not-found':'No account found with these credentials',
+    'auth/wrong-password':'Incorrect password',
+    'auth/invalid-credential':'Invalid credentials',
+    'auth/too-many-requests':'Too many attempts. Please try again later.',
+    'auth/email-already-in-use':'That email address is already registered',
+    'auth/weak-password':'Password must be at least 6 characters',
+    'auth/network-request-failed':'Network error — check your connection',
+    'auth/operation-not-allowed':'Email/password sign-in is not enabled in the Firebase Console',
+    'auth/missing-password':'Please enter your password',
+    'auth/requires-recent-login':'Please sign in again and retry',
+    'permission-denied':'Firestore permission denied — check your security rules',
+    'unavailable':'Service unavailable — check your connection'
+  };
+  return map[err.code] || err.message || 'Something went wrong';
+}
+
+/* ============================================================
+   1. ICONS
+   ============================================================ */
+const ICONS = {
+  home:'<path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/>',
+  box:'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/>',
+  cart:'<circle cx="9" cy="20" r="1.6"/><circle cx="18" cy="20" r="1.6"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.6L22 7H6"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  cash:'<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  cashIn:'<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/><path d="M5 21h14"/>',
+  cashOut:'<path d="M12 5v14"/><path d="m5 12 7 7 7-7"/><path d="M5 3h14"/>',
+  scale:'<path d="M12 3v18M7 21h10M5 7h14"/><path d="m5 7-3 6h6zM19 7l-3 6h6z"/>',
+  chart:'<path d="M18 20V10M12 20V4M6 20v-6"/>',
+  sliders:'<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  edit:'<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
+  trash:'<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+  file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
+  alert:'<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  box2:'<path d="M20 7 12 3 4 7v10l8 4 8-4z"/><path d="M4 7l8 4 8-4M12 21V11"/>',
+  trend:'<path d="m23 6-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/>',
+  lock:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  refresh:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+};
+const icon = (n, cls = '') =>
+  `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[n] || ''}</svg>`;
+
+/* ============================================================
+   2. DATA LAYER (localStorage, per-organization)
+   ============================================================ */
+const BASE_STORE_KEY = 'liquorpos_db_v2';
+const SESSION_KEY    = 'liquorpos_session_v2';
+
+let DB = null;
+let session = null;
+let currentSection = 'landing';
+let currentOrgId = null;
+
+function storeKey(){
+  return currentOrgId ? `${BASE_STORE_KEY}_${currentOrgId}` : BASE_STORE_KEY;
+}
+
+function seedDB(){
+  return {
+    settings:{
+      businessName:'MOBIBIZ',
+      tagline:'Point of Sale & Job Management',
+      logo:'', phone:'', email:'', address:'',
+      currency:'KES', theme:'dark',
+      showLogoOnReports:true, defaultLowStock:5
+    },
+    users:[],
+    products:[], sales:[], customers:[], debts:[], repayments:[],
+    moneyIn:[], moneyOut:[], reconciliations:[]
+  };
+}
+
+const COLLECTIONS = ['users','products','sales','customers','debts','repayments','moneyIn','moneyOut','reconciliations'];
+
+function normalize(raw){
+  const base = seedDB();
+  const out = Object.assign({}, base, raw || {});
+  out.settings = Object.assign({}, base.settings, (raw && raw.settings) || {});
+  COLLECTIONS.forEach(k => { if(!Array.isArray(out[k])) out[k] = base[k]; });
+  return out;
+}
+
+function loadDB(){
+  if(!currentOrgId){ DB = seedDB(); return; }
+  try{
+    const raw = localStorage.getItem(storeKey());
+    if(raw){ DB = normalize(JSON.parse(raw)); return; }
+  }catch(err){ console.warn('Could not read saved data:', err); }
+  DB = seedDB();
+  persist();
+}
+function persist(){
+  if(!currentOrgId) return;
+  try{ localStorage.setItem(storeKey(), JSON.stringify(DB)); }
+  catch(err){ toast('Storage full — export a backup!', 'err'); }
+}
+function commit(){ persist(); render(); }
+
+/* ---------- SETTINGS: org-scoped Firestore persistence ---------- */
+const settingsRef = () => doc(db, 'orgs', currentOrgId);
+
+async function pushSettings(){
+  if(!currentOrgId) return;
+  try{
+    await setDoc(settingsRef(), {
+      businessName:      DB.settings.businessName,
+      tagline:           DB.settings.tagline || '',
+      logo:              DB.settings.logo || '',
+      phone:             DB.settings.phone || '',
+      email:             DB.settings.email || '',
+      address:           DB.settings.address || '',
+      currency:          DB.settings.currency || 'KES',
+      theme:             DB.settings.theme || 'dark',
+      showLogoOnReports: DB.settings.showLogoOnReports !== false,
+      defaultLowStock:   num(DB.settings.defaultLowStock) || 5
+    }, { merge: true });
+  }catch(err){ console.warn('Could not save settings to Firestore:', err); }
+}
+
+async function pullSettings(){
+  if(!currentOrgId) return false;
+  try{
+    const snap = await getDoc(settingsRef());
+    if(snap.exists()){
+      const d = snap.data();
+      DB.settings = Object.assign(DB.settings, {
+        businessName:      d.businessName || DB.settings.businessName,
+        tagline:           d.tagline || '',
+        logo:              d.logo || '',
+        phone:             d.phone || '',
+        email:             d.email || '',
+        address:           d.address || '',
+        currency:          d.currency || 'KES',
+        theme:             d.theme || 'dark',
+        showLogoOnReports: d.showLogoOnReports !== false,
+        defaultLowStock:   num(d.defaultLowStock) || 5
+      });
+      persist();
+    }
+    return true;
+  }catch(err){
+    console.warn('Could not load settings from Firestore:', err);
+    return false;
+  }
+}
+
+function commitSettings(){
+  persist();
+  pushSettings();
+  applyTheme(DB.settings.theme || 'dark');
+  render();
+}
+
+async function syncUsersFromFirestore(){
+  if(!auth.currentUser || !currentOrgId){ DB.users = []; return; }
+  try{
+    const snap = await getDocs(query(
+      collection(db, 'users'),
+      where('orgId', '==', currentOrgId)
+    ));
+    DB.users = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a,b) => String(a.name || '').localeCompare(String(b.name || '')));
+    persist();
+  }catch(err){
+    console.warn('Could not fetch users from Firestore:', err);
+    DB.users = [];
+  }
+}
+
+/* ============================================================
+   3. SUBSCRIPTION / BILLING (per-org)
+   ============================================================ */
+const DAY_MS = 86400000;
+const SUB_CACHE_KEY = 'liquorpos_sub_v1';
+const SUB_DOC = () => doc(db, 'subscriptions', currentOrgId);
+
+const BILLING = {
+  trialDays:     30,
+  graceDays:     3,
+  pricePerMonth: 1, // Sandbox
+  currency:      'KES',
+  paybill:       '174379', // Sandbox
+  accountNo:     'LIQUORPOS',
+  supportPhone:  '+254 700 123 456',
+  checkoutUrl:   '',
+  payEndpoint:   '/api/mpesa/stkpush' // <-- UPDATED
+};
+
+let SUB = null;
+let SUB_STATE = null;
+
+function computeSubState(sub){
+  const now = Date.now();
+  const grace = num(sub.graceDays ?? BILLING.graceDays) * DAY_MS;
+  const paidUntil = num(sub.paidUntil);
+  const trialEnd  = num(sub.trialEnd);
+
+  if(paidUntil && now <= paidUntil + grace){
+    return { status: now <= paidUntil ? 'active' : 'grace',
+      daysLeft: Math.max(0, Math.ceil((paidUntil - now) / DAY_MS)),
+      expiresOn: paidUntil, paid: true };
+  }
+  if(trialEnd && now <= trialEnd + grace){
+    return { status: now <= trialEnd ? 'trial' : 'grace',
+      daysLeft: Math.max(0, Math.ceil((trialEnd - now) / DAY_MS)),
+      expiresOn: trialEnd, paid: false };
+  }
+  return { status:'expired', daysLeft: 0, expiresOn: paidUntil || trialEnd || null, paid: !!paidUntil };
+}
+
+function cacheSub(sub){
+  try{ localStorage.setItem(SUB_CACHE_KEY, JSON.stringify({sub, verifiedAt: Date.now()})); }catch(_){}
+}
+function readCachedSub(){
+  try{
+    const raw = localStorage.getItem(SUB_CACHE_KEY);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(Date.now() - num(parsed.verifiedAt) > 7 * DAY_MS) return null;
+    return parsed;
+  }catch(_){ return null; }
+}
+
+async function loadSubscription(){
+  if(!currentOrgId){
+    SUB_STATE = { status:'unknown', daysLeft:0, expiresOn:null, paid:false };
+    return SUB_STATE;
+  }
+  try{
+    const snap = await getDoc(SUB_DOC());
+    if(snap.exists()){
+      SUB = snap.data();
+    }else{
+      const now = Date.now();
+      SUB = {
+        status:        'trial',
+        trialStart:    now,
+        trialEnd:      now + BILLING.trialDays * DAY_MS,
+        paidUntil:     0,
+        graceDays:     BILLING.graceDays,
+        plan:          'monthly',
+        pricePerMonth: BILLING.pricePerMonth,
+        createdAt:     now,
+        createdBy:     session ? session.id : null,
+        orgId:         currentOrgId
+      };
+      await setDoc(SUB_DOC(), SUB);
+    }
+    cacheSub(SUB);
+    SUB_STATE = computeSubState(SUB);
+  }catch(err){
+    console.warn('Subscription lookup failed:', err);
+    const cached = readCachedSub();
+    if(cached){
+      SUB = cached.sub;
+      SUB_STATE = computeSubState(SUB);
+      SUB_STATE.offline = true;
+    }else{
+      SUB_STATE = { status:'unknown', daysLeft:0, expiresOn:null, paid:false };
+    }
+  }
+  return SUB_STATE;
+}
+
+const subBlocked = () =>
+  !SUB_STATE || SUB_STATE.status === 'expired' || SUB_STATE.status === 'unknown';
+
+function paywallHTML(){
+  const s = DB.settings;
+  const expiredOn = SUB && (num(SUB.paidUntil) || num(SUB.trialEnd)) || null;
+  const unverified = SUB_STATE && SUB_STATE.status === 'unknown';
+
+  return `
+    <div class="card" style="max-width:620px;margin:34px auto;text-align:center;padding:34px 26px">
+      <div style="width:66px;height:66px;border-radius:18px;display:grid;place-items:center;margin:0 auto 16px;
+                  background:${unverified ? 'rgba(224,163,58,.14)' : 'rgba(224,87,79,.14)'};
+                  color:${unverified ? 'var(--warn)' : 'var(--danger)'}">
+        ${icon(unverified ? 'alert' : 'lock')}
+      </div>
+
+      <h2 style="font-size:22px;margin-bottom:8px">
+        ${unverified ? 'Subscription Unverified' : 'Subscription Expired'}
+      </h2>
+
+      <p style="color:var(--muted);font-size:13.5px;max-width:440px;margin:0 auto 22px">
+        ${unverified
+          ? `We could not reach the billing server to confirm the subscription for
+             <b style="color:var(--gold)">${esc(s.businessName)}</b>. Connect to the internet and tap
+             <b>Re-check status</b>.`
+          : `Access to <b style="color:var(--gold)">${esc(s.businessName)}</b> ended on
+             <b>${fmtDate(expiredOn)}</b>. Renew to keep recording sales, tracking debts
+             and running reports.`}
+      </p>
+
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:20px;text-align:left">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <b>Monthly plan</b>
+          <b style="color:var(--gold);font-size:18px">${money(BILLING.pricePerMonth)}</b>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:2">
+          <div>M-Pesa Paybill: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
+          <div>Account number: <b style="color:var(--text)">${esc(BILLING.accountNo)}</b></div>
+          <div>Support: <b style="color:var(--text)">${esc(BILLING.supportPhone)}</b></div>
+        </div>
+      </div>
+
+      <div class="btn-row" style="justify-content:center">
+        <button class="btn primary" id="payNowBtn">${icon('cash','sm')} Pay Now</button>
+        <button class="btn ghost" id="payConfirmBtn">I have paid — submit code</button>
+        <button class="btn ghost" id="recheckSub">${icon('refresh','sm')} Re-check status</button>
+      </div>
+    </div>`;
+}
+
+async function initiateMpesaPayment(buttonEl){
+  const phone = prompt('Enter the M-Pesa phone number to pay from\nFormat: 2547XXXXXXXX or 2541XXXXXXXX');
+  if(!phone) return;
+  
+  const cleanPhone = phone.replace(/\s+/g, '').trim();
+  if(!/^254[17]\d{8}$/.test(cleanPhone)){
+    return toast('Phone must be like 254712345678', 'err');
+  }
+
+  const originalText = buttonEl ? buttonEl.textContent : 'Pay / Renew';
+  if(buttonEl){ buttonEl.disabled = true; buttonEl.textContent = 'Sending STK Push…'; }
+
+  try {
+    const res = await fetch(BILLING.payEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: cleanPhone,
+        amount: BILLING.pricePerMonth,
+        orgId: currentOrgId
+      })
+    });
+    
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'STK Push failed');
+
+    toast('Check your phone — enter M-Pesa PIN to complete payment', 'ok');
+    if(buttonEl) buttonEl.textContent = 'Waiting for payment…';
+
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
+      await loadSubscription();
+      
+      if(!subBlocked()){
+        clearInterval(interval);
+        toast('Subscription activated — welcome back!', 'ok');
+        render();
+        return;
+      }
+      
+      if(attempts >= 24){
+        clearInterval(interval);
+        if(buttonEl){ 
+          buttonEl.disabled = false; 
+          buttonEl.textContent = originalText; 
+        }
+        toast('Payment not confirmed yet. Tap "Re-check status" shortly.', 'err');
+      }
+    }, 5000);
+    
+  } catch(err) {
+    console.error(err);
+    toast(err.message || 'Payment failed. Check connection.', 'err');
+    if(buttonEl){ 
+      buttonEl.disabled = false; 
+      buttonEl.textContent = originalText; 
+    }
+  }
+}
+
+function bindPaywall(){
+  const pay = $('#payNowBtn');
+  if(pay) pay.addEventListener('click', () => initiateMpesaPayment(pay));
+
+  const claim = $('#payConfirmBtn');
+  if(claim) claim.addEventListener('click', async () => {
+    const code = prompt('Enter your M-Pesa / payment confirmation code:');
+    if(!code || !code.trim()) return;
+    claim.disabled = true;
+    try{
+      await setDoc(doc(collection(db, 'paymentRequests')), {
+        code:       code.trim(),
+        orgId:      currentOrgId,
+        uid:        session ? session.id : null,
+        name:       session ? session.name : '',
+        email:      session ? session.email : '',
+        amount:     BILLING.pricePerMonth,
+        currency:   BILLING.currency,
+        status:     'pending',
+        createdAt:  Date.now()
+      });
+      toast('Payment submitted — you will be reactivated shortly', 'ok');
+    }catch(err){
+      toast(err.message || 'Could not submit payment', 'err');
+    }finally{
+      claim.disabled = false;
+    }
+  });
+
+  const recheck = $('#recheckSub');
+  if(recheck) recheck.addEventListener('click', async () => {
+    recheck.disabled = true;
+    toast('Checking subscription…');
+    await loadSubscription();
+    recheck.disabled = false;
+    render();
+    if(!subBlocked()) toast('Subscription active — welcome back!', 'ok');
+    else toast('Still not active', 'err');
+  });
+}
+
+function subBanner(){
+  if(!SUB_STATE || SUB_STATE.status === 'active' || SUB_STATE.status === 'unknown') return '';
+  if(SUB_STATE.daysLeft > 7 && SUB_STATE.status === 'trial') return '';
+  const isGrace = SUB_STATE.status === 'grace';
+  const isTrial = SUB_STATE.status === 'trial';
+  const cls = isGrace ? 'danger' : 'warn';
+  const msg = isGrace
+    ? `Your subscription has lapsed — you are in the grace period. Renew now to avoid interruption.`
+    : isTrial
+      ? `Free trial: <b>${SUB_STATE.daysLeft}</b> day${SUB_STATE.daysLeft === 1 ? '' : 's'} remaining.`
+      : `Subscription expires in <b>${SUB_STATE.daysLeft}</b> day${SUB_STATE.daysLeft === 1 ? '' : 's'}.`;
+  return `<div class="sub-banner ${cls}">
+    ${icon('clock','sm')}<span>${msg}</span><span class="spacer"></span>
+    <button class="btn sm ghost" id="bannerRenew">Renew</button>
+  </div>`;
+}
+
+/* ============================================================
+   4. AUTHENTICATION & PERMISSIONS
+   ============================================================ */
+const NAV = [
+  {id:'landing',   label:'Landing Page',        icon:'home'},
+  {id:'dashboard', label:'Dashboard',           icon:'grid'},
+  {id:'products',  label:'Products',            icon:'box',     adminOnly:true},
+  {id:'sales',     label:'Sales Recording',     icon:'cart'},
+  {id:'customers', label:'Customers & Debts',   icon:'users'},
+  {id:'moneyIn',   label:'Money In',            icon:'cashIn',  adminOnly:true},
+  {id:'moneyOut',  label:'Money Out',           icon:'cashOut'},
+  {id:'reconcile', label:'Reconciliation',      icon:'scale',   adminOnly:true},
+  {id:'reports',   label:'Reports',             icon:'chart',   adminOnly:true},
+  {id:'settings',  label:'Settings',            icon:'sliders', adminOnly:true}
+];
+const isAdmin = () => !!session && session.role === 'admin';
+function canAccess(id){
+  const item = NAV.find(n => n.id === id);
+  return !!item && (!item.adminOnly || isAdmin());
+}
+
+function saveSession(user, remember){
+  const data = {
+    id: user.id, username: user.username, name: user.name,
+    role: user.role, email: user.email, phone: user.phone || '',
+    orgId: user.orgId,
+    ts: Date.now()
+  };
+  const raw = JSON.stringify(data);
+  try{
+    if(remember){
+      localStorage.setItem(SESSION_KEY, raw);
+      sessionStorage.removeItem(SESSION_KEY);
+    }else{
+      sessionStorage.setItem(SESSION_KEY, raw);
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }catch(_){}
+  session = data;
+  return session;
+}
+function clearSession(){
+  try{
+    localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+  }catch(_){}
+  session = null;
+  currentOrgId = null;
+  DB = seedDB();
+}
+
+const unameKey = u => String(u || '').trim().toLowerCase();
+
+async function findEmailByUsername(username){
+  const snap = await getDoc(doc(db, 'usernames', unameKey(username)));
+  if(!snap.exists()) throw new Error('No account found with that username');
+  const data = snap.data();
+  if(!data.email) throw new Error('That username has no email on file');
+  return data.email;
+}
+async function reserveUsername(username, uid, email, orgId){
+  await setDoc(doc(db, 'usernames', unameKey(username)), {
+    username: String(username).trim(),
+    uid,
+    email: String(email).trim().toLowerCase(),
+    orgId: orgId || currentOrgId || null,
+    createdAt: Date.now()
+  });
+}
+async function releaseUsername(username){
+  try{ await deleteDoc(doc(db, 'usernames', unameKey(username))); }catch(_){}
+}
+
+async function authenticateWithEmail(email, password, remember){
+  await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+  try{
+    await signInWithEmailAndPassword(auth, email.trim(), password);
+  }catch(err){
+    throw new Error(friendlyAuthError(err));
+  }
+}
+async function authenticateWithUsername(username, password, remember){
+  await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+  let email;
+  try{ email = await findEmailByUsername(username); }
+  catch(err){ throw new Error(err.message || 'Username not found'); }
+  try{
+    await signInWithEmailAndPassword(auth, email, password);
+  }catch(err){
+    throw new Error(friendlyAuthError(err));
+  }
+}
+
+async function createUserAccount({name, username, email, phone, password, role}){
+  if(!currentOrgId) throw new Error('No active organization');
+  const key = unameKey(username);
+  if(!key) throw new Error('Username is required');
+
+  const taken = await getDoc(doc(db, 'usernames', key));
+  if(taken.exists()) throw new Error(`The username “${username}” is already taken`);
+
+  const secAuth = getSecondaryAuth();
+  let cred;
+  try{
+    cred = await createUserWithEmailAndPassword(secAuth, email.trim(), password);
+  }catch(err){
+    throw new Error(friendlyAuthError(err));
+  }
+
+  const newUid = cred.user.uid;
+  try{
+    await updateProfile(cred.user, { displayName: name });
+
+    await setDoc(doc(db, 'users', newUid), {
+      uid:       newUid,
+      name:      name.trim(),
+      username:  String(username).trim(),
+      phone:     String(phone || '').trim(),
+      email:     email.trim().toLowerCase(),
+      role,
+      active:    true,
+      orgId:     currentOrgId,
+      createdAt: Date.now(),
+      createdBy: session.id
+    });
+    await reserveUsername(username, newUid, email, currentOrgId);
+  }catch(err){
+    try{ await deleteAuthUser(cred.user); }catch(_){}
+    throw new Error('Could not save the new user: ' + (err.message || err));
+  }finally{
+    try{ await signOut(secAuth); }catch(_){}
+  }
+  return newUid;
+}
+
+let signUpInProgress = false;
+
+async function signUpPublic({ name, username, phone, email, password, remember }){
+  const key = unameKey(username);
+  if(!key) throw new Error('Username is required');
+  if(password.length < 6) throw new Error('Password must be at least 6 characters');
+
+  signUpInProgress = true;
+  const createdAt = Date.now();
+
+  try{
+    await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+
+    let cred;
+    try{
+      cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    }catch(err){
+      throw new Error(friendlyAuthError(err));
+    }
+    const newUid = cred.user.uid;
+    try{ await updateProfile(cred.user, { displayName: name }); }catch(_){}
+
+    try{
+      const taken = await getDoc(doc(db, 'usernames', key));
+      if(taken.exists()) throw new Error(`The username “${username}” is already taken`);
+    }catch(err){
+      if(err.message && err.message.includes('already taken')){
+        try{ await deleteAuthUser(auth.currentUser); }catch(_){}
+        try{ await signOut(auth); }catch(_){}
+        throw err;
+      }
+    }
+
+    const orgId = 'org_' + uid().slice(0,10) + '_' + newUid.slice(0,6);
+    const businessName = name.trim().split(/\s+/)[0] + "'s Business";
+
+    try{
+      await setDoc(doc(db, 'orgs', orgId), {
+        orgId, businessName,
+        tagline: 'Point of Sale & Job Management',
+        logo: '', phone: phone.trim(),
+        email: email.trim().toLowerCase(),
+        address: '', currency: 'KES', theme: 'dark',
+        showLogoOnReports: true, defaultLowStock: 5,
+        ownerUid: newUid, createdAt
+      });
+    }catch(err){
+      try{ await deleteAuthUser(auth.currentUser); }catch(_){}
+      try{ await signOut(auth); }catch(_){}
+      throw new Error('Could not create organization: ' + (err.message || err));
+    }
+
+    try{
+      await setDoc(doc(db, 'users', newUid), {
+        uid: newUid,
+        name: name.trim(),
+        username: String(username).trim(),
+        phone: phone.trim(),
+        email: email.trim().toLowerCase(),
+        role: 'admin',
+        active: true,
+        orgId,
+        createdAt,
+        signedUpPublicly: true
+      });
+      await reserveUsername(username, newUid, email, orgId);
+    }catch(err){
+      try{ await deleteAuthUser(auth.currentUser); }catch(_){}
+      try{ await signOut(auth); }catch(_){}
+      throw new Error('Could not complete sign up: ' + (err.message || err));
+    }
+
+    currentOrgId = orgId;
+    session = {
+      id: newUid,
+      email: email.trim().toLowerCase(),
+      name: name.trim(),
+      username: String(username).trim(),
+      phone: phone.trim(),
+      role: 'admin',
+      orgId
+    };
+    saveSession(session, remember);
+    loadDB();
+    await loadSubscription();
+    await syncUsersFromFirestore();
+    startApp();
+
+    return newUid;
+  }finally{
+    signUpInProgress = false;
+  }
+}
+
+async function patchUser(uid, patch){
+  await updateDoc(doc(db, 'users', uid), patch);
+}
+async function removeUserRecord(u){
+  await deleteDoc(doc(db, 'users', u.id));
+  await releaseUsername(u.username);
+}
+
+async function sendResetLink(usernameOrEmail){
+  const v = String(usernameOrEmail || '').trim();
+  if(!v) throw new Error('Enter your email or username');
+  const email = v.includes('@') ? v : await findEmailByUsername(v);
+  try{
+    await sendPasswordResetEmail(auth, email);
+  }catch(err){
+    throw new Error(friendlyAuthError(err));
+  }
+}
+
+async function doSignOut(){
+  try { await signOut(auth); } catch(_){}
+  clearSession();
+  SUB = null;
+  SUB_STATE = null;
+  resetViewState();
+  stopApp();
+  ['#siPass','#siUser','#suName','#suUser','#suPhone','#suEmail','#suPass']
+    .forEach(sel => { const el = $(sel); if(el) el.value = ''; });
+  setLoginStatus('');
+  toast('Signed out');
+}
+
+function updateLoginHint(){
+  const hint = $('#loginHint');
+  if(!hint) return;
+  hint.innerHTML = `<b>New here?</b> Tap <b>Sign Up</b> — you'll create your own
+    organization and become its administrator. Use the <b>same URL</b> as everyone else;
+    each business's data stays completely separate.<br><br>
+    <b>Already registered?</b> Sign in with either your <b>username</b> or your
+    <b>email address</b>. Admins add staff from
+    <b>Settings → User Accounts</b>.`;
+}
+
+/* ============================================================
+   5. THEME
+   ============================================================ */
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', theme === 'dark' ? '#0e0d0b' : '#f5f2ec');
+}
+function toggleTheme(){
+  const next = DB.settings.theme === 'dark' ? 'light' : 'dark';
+  DB.settings.theme = next;
+  applyTheme(next);
+  persist();
+  pushSettings();
+  toast(next === 'dark' ? 'Dark mode enabled' : 'Light mode enabled');
+}
+
+/* ============================================================
+   6. BRANDING
+   ============================================================ */
+function logoHTML(){
+  return DB.settings.logo
+    ? `<img src="${DB.settings.logo}" alt="logo">`
+    : (initials(DB.settings.businessName) || 'LB');
+}
+function paintBranding(){
+  const s = DB.settings;
+  const biz = s.businessName || 'LiquorPOS';
+  [['#topBiz',biz],['#drawerBiz',biz],['#loginBiz',biz],['#topTag',s.tagline || 'Point of Sale']]
+    .forEach(([sel, txt]) => { const el = $(sel); if(el) el.textContent = txt; });
+  ['#topLogo','#drawerLogo','#loginLogo'].forEach(sel => {
+    const el = $(sel); if(el) el.innerHTML = logoHTML();
+  });
+  const rb = $('#renameBizBtn');
+  if(rb) rb.classList.toggle('hidden', !isAdmin());
+  document.title = biz + ' — POS';
+}
+
+/* ============================================================
+   7. NAVIGATION SHELL
+   ============================================================ */
+function buildNav(){
+  const nav = $('#navList');
+  if(!nav) return;
+  const openDebts = DB.debts.filter(d => num(d.balance) > 0).length;
+  const locked = subBlocked();
+
+  nav.innerHTML = NAV.filter(n => canAccess(n.id)).map(n => {
+    const badge = (n.id === 'customers' && openDebts) ? `<span class="badge">${openDebts}</span>` : '';
+    return `<div class="nav-item ${currentSection === n.id && !locked ? 'active' : ''} ${locked ? 'locked' : ''}" data-nav="${n.id}">
+      ${icon(n.icon)}<span>${n.label}</span>${badge}
+    </div>`;
+  }).join('');
+
+  $$('.nav-item', nav).forEach(el => el.addEventListener('click', () => {
+    go(el.dataset.nav);
+    closeDrawer();
+  }));
+}
+function openDrawer(){ $('#drawer').classList.add('on'); $('#scrim').classList.add('on'); }
+function closeDrawer(){ $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); }
+
+function go(section){
+  if(!canAccess(section)){ toast('Access restricted to administrators', 'err'); return; }
+  currentSection = section;
+  render();
+  $('#view').scrollTop = 0;
+}
+
+/* ============================================================
+   8. ROUTER
+   ============================================================ */
+const VIEWS = {
+  landing:   () => viewLanding(),
+  dashboard: () => viewDashboard(),
+  products:  () => viewProducts(),
+  sales:     () => viewSales(),
+  customers: () => viewCustomers(),
+  moneyIn:   () => viewMoneyIn(),
+  moneyOut:  () => viewMoneyOut(),
+  reconcile: () => viewReconcile(),
+  reports:   () => viewReports(),
+  settings:  () => viewSettings()
+};
+const BINDERS = {
+  dashboard: bindDashboard,
+  products:  bindProducts,
+  sales:     bindSales,
+  customers: bindCustomers,
+  moneyIn:   bindMoneyIn,
+  moneyOut:  bindMoneyOut,
+  reconcile: bindReconcile,
+  reports:   bindReports,
+  settings:  bindSettings
+};
+
+function render(){
+  const view = $('#view');
+  if(subBlocked()){
+    view.innerHTML = paywallHTML();
+    bindPaywall();
+    buildNav();
+    paintBranding();
+    return;
+  }
+  if(!canAccess(currentSection)) currentSection = 'landing';
+  view.innerHTML = subBanner() + (VIEWS[currentSection] || VIEWS.landing)();
+  const bind = BINDERS[currentSection];
+  if(bind) bind();
+  const renew = $('#bannerRenew');
+  if(renew) renew.addEventListener('click', () => go('settings'));
+  buildNav();
+  paintBranding();
+}
+
+function rerenderKeepingFocus(selector){
+  const el = $(selector);
+  const caret = el && el.selectionStart != null ? el.selectionStart : null;
+  render();
+  const next = $(selector);
+  if(next && caret != null){
+    next.focus();
+    try{ next.setSelectionRange(caret, caret); }catch(_){}
+  }
+}
+
+/* ============================================================
+   9. SHARED UI SNIPPETS
+   ============================================================ */
+const PAYMENT_METHODS = ['Cash','M-Pesa','Bank','Credit'];
+const PAYMENT_COLORS  = {'Cash':'green','M-Pesa':'blue','Bank':'amber','Credit':'red'};
+const payPill = m => `<span class="pill ${PAYMENT_COLORS[m] || 'grey'}">${esc(m)}</span>`;
+
+function kpiCard({label, value, sub, tone = '', glyph = ''}){
+  return `<div class="card kpi ${tone}">
+    ${glyph ? `<div class="glyph">${icon(glyph)}</div>` : ''}
+    <div class="lbl">${esc(label)}</div>
+    <div class="val">${value}</div>
+    ${sub ? `<div class="sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+/* ============================================================
+   10. LANDING PAGE (in-app)
+   ============================================================ */
+function viewLanding(){
+  const s = DB.settings;
+  const totalUnits   = DB.products.reduce((a,p) => a + num(p.qty), 0);
+  const debtTotal    = DB.debts.reduce((a,d) => a + num(d.balance), 0);
+  const todaySales   = DB.sales.filter(x => x.date === todayISO());
+  const todayRevenue = todaySales.reduce((a,x) => a + num(x.total), 0);
+
+  const features = [
+    ['cart','Lightning Sales Entry','Ring up a sale in seconds with auto-filled prices, stock deduction and instant receipts.'],
+    ['users','Debt & Customer Ledger','Credit sales automatically create customer debts with balances, due dates and repayment tracking.'],
+    ['cash','Cash Flow Control','Track every shilling out — cash, M-Pesa, bank, rent, salaries and more.'],
+    ...(isAdmin() ? [['scale','Stock Reconciliation','Compare physical counts against system stock and adjust discrepancies in one click.']] : []),
+    ...(isAdmin() ? [['chart','Powerful Reporting','Revenue, expenses, profit, product performance and payment breakdowns by any date range.']] : []),
+    ['sliders','Roles & Security','Admin and worker roles with Firebase Authentication, plus full JSON backup and restore.']
+  ];
+
+  return `
+    <div class="hero">
+      <div class="hero-inner">
+        <div class="hero-logo">${logoHTML()}</div>
+        <h1>Welcome to <span>${esc(s.businessName)}</span></h1>
+        <p>${esc(s.tagline || 'A modern, fast and reliable point of sale & job management system built for busy liquor retail.')}</p>
+        <div class="btn-row">
+          <button class="btn primary" data-go="sales">${icon('cart','sm')} Start Selling</button>
+          <button class="btn ghost" data-go="dashboard">${icon('grid','sm')} View Dashboard</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:20px">
+      ${kpiCard({label:"Today's Revenue", value:moneyShort(todayRevenue), sub:`${todaySales.length} sale${todaySales.length === 1 ? '' : 's'} recorded`, tone:'green', glyph:'trend'})}
+      ${kpiCard({label:'Outstanding Debts', value:moneyShort(debtTotal), sub:`${DB.debts.filter(d => num(d.balance) > 0).length} open account(s)`, tone:'red', glyph:'users'})}
+      ${isAdmin()
+        ? kpiCard({label:'Units in Stock', value:totalUnits.toLocaleString(), sub:`${DB.products.length} products listed`, tone:'gold', glyph:'box'})
+        : kpiCard({label:'Currency', value:esc(s.currency), sub:esc(s.phone || '—'), tone:'blue', glyph:'cash'})}
+      ${isAdmin()
+        ? kpiCard({label:'Currency', value:esc(s.currency), sub:esc(s.phone || '—'), tone:'blue', glyph:'cash'})
+        : kpiCard({label:'Signed in as', value:esc(session.name.split(' ')[0]), sub:'Worker role', tone:'gold', glyph:'lock'})}
+    </div>
+
+    <h3 style="margin:6px 0 14px;font-size:16px">Everything your shop needs</h3>
+    <div class="grid g3" style="margin-bottom:22px">
+      ${features.map(([ic, title, desc]) => `
+        <div class="feature">
+          <div class="fi">${icon(ic)}</div>
+          <b>${title}</b>
+          <p>${desc}</p>
+        </div>`).join('')}
+    </div>
+
+    <div class="card" style="text-align:center">
+      <h3 style="justify-content:center">${icon('alert','sm')} Quick Start</h3>
+      <p style="color:var(--muted);font-size:13px;margin:0 auto 16px;max-width:520px">
+        ${isAdmin()
+          ? 'Head to <b>Products</b> to stock your shelves, then use <b>Sales Recording</b> for every transaction. Credit sales automatically flow into <b>Customers &amp; Debts</b>.'
+          : 'Head to <b>Sales Recording</b> to record every transaction. Credit sales automatically flow into <b>Customers &amp; Debts</b>.'}
+      </p>
+      <div class="btn-row" style="justify-content:center">
+        ${isAdmin() ? `<button class="btn primary" data-go="products">${icon('box','sm')} Manage Products</button>` : ''}
+        <button class="btn ${isAdmin() ? 'ghost' : 'primary'}" data-go="sales">${icon('cart','sm')} Record a Sale</button>
+      </div>
+    </div>
+
+    <div class="landing-foot">
+      ${esc(s.businessName)} · ${esc(s.address || '')} · ${esc(s.phone || '')}<br>
+      © ${new Date().getFullYear()} — Web-Based POS &amp; Job Management System
+    </div>
+  `;
+}
+
+/* ============================================================
+   11. DASHBOARD
+   ============================================================ */
+function viewDashboard(){
+  const t = todayISO();
+  const totalUnits  = DB.products.reduce((a,p) => a + num(p.qty), 0);
+  const lowItems    = DB.products.filter(p => num(p.qty) <= num(p.lowStock));
+  const outItems    = DB.products.filter(p => num(p.qty) <= 0);
+  const debtTotal   = DB.debts.reduce((a,d) => a + num(d.balance), 0);
+
+  const todaySales    = DB.sales.filter(s => s.date === t);
+  const todayRevenue  = todaySales.reduce((a,s) => a + num(s.total), 0);
+  const todayExpenses = DB.moneyOut.filter(m => m.date === t).reduce((a,m) => a + num(m.amount), 0);
+
+  const recent    = [...DB.sales].sort((a,b) => (b.ts||0) - (a.ts||0)).slice(0, 8);
+  const lowSorted = [...lowItems].sort((a,b) => num(a.qty) - num(b.qty));
+
+  const days = [];
+  for(let i = 6; i >= 0; i--){
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().slice(0,10);
+    days.push({
+      iso,
+      label: d.toLocaleDateString('en-GB', {weekday:'short'}),
+      total: DB.sales.filter(s => s.date === iso).reduce((a,s) => a + num(s.total), 0)
+    });
+  }
+  const maxDay = Math.max(1, ...days.map(d => d.total));
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Dashboard</h2>
+        <p>Live overview · ${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</p>
+      </div>
+      <button class="btn primary" data-go="sales">${icon('plus','sm')} New Sale</button>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Total Units in Stock', value:totalUnits.toLocaleString(), sub:`Across ${DB.products.length} products`, tone:'gold', glyph:'box'})}
+      ${kpiCard({label:'Low Stock Items', value:lowItems.length, sub:`${outItems.length} completely out of stock`, tone: lowItems.length ? 'red' : 'green', glyph:'alert'})}
+      ${kpiCard({label:'Outstanding Debts', value:moneyShort(debtTotal), sub:`${DB.debts.filter(d => num(d.balance) > 0).length} unpaid account(s)`, tone:'red', glyph:'users'})}
+      ${kpiCard({label:"Today's Expenses", value:moneyShort(todayExpenses), sub:`${DB.moneyOut.filter(m => m.date === t).length} entr(ies)`, tone:'amber', glyph:'cash'})}
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:"Today's Sales", value:moneyShort(todayRevenue), sub:`${todaySales.length} transaction(s)`, tone:'green'})}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('trend','sm')} Last 7 Days Revenue</h3>
+        ${days.map(d => `
+          <div class="bar-row">
+            <div class="nm">${d.label}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${(d.total / maxDay * 100).toFixed(1)}%"></div></div>
+            <div class="vl">${moneyShort(d.total)}</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="card">
+        <h3>${icon('alert','sm')} Low Stock Alerts</h3>
+        ${lowSorted.length ? `
+          <div class="table-wrap" style="border:none">
+            <table style="min-width:auto">
+              <thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Alert</th></tr></thead>
+              <tbody>
+                ${lowSorted.slice(0,7).map(p => `
+                  <tr>
+                    <td>${esc(p.name)}</td>
+                    <td class="num"><span class="pill ${num(p.qty) <= 0 ? 'red' : 'amber'}">${num(p.qty)}</span></td>
+                    <td class="num" style="color:var(--muted)">${num(p.lowStock)}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          ${lowSorted.length > 7 ? `<p style="color:var(--muted);font-size:12px;margin:10px 0 0">+${lowSorted.length - 7} more…</p>` : ''}`
+        : `<div class="empty">${icon('check')}<div>All products are well stocked 🎉</div></div>`}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('cart','sm')} Recent Sales</h3>
+      ${recent.length ? `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">Total</th><th>Payment</th><th>Customer</th></tr></thead>
+            <tbody>
+              ${recent.map(s => `
+                <tr>
+                  <td>${fmtDate(s.date)}</td>
+                  <td>${esc(s.productName)}</td>
+                  <td class="num">${num(s.qty)}</td>
+                  <td class="num"><b>${money(s.total)}</b></td>
+                  <td>${payPill(s.paymentMethod)}</td>
+                  <td>${esc(s.customerName || '—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : `<div class="empty">${icon('cart')}<div>No sales recorded yet</div></div>`}
+    </div>
+  `;
+}
+function bindDashboard(){ /* data-go buttons handled by global delegation */ }
+
+/* ============================================================
+   12. PRODUCTS  (admin only)
+   ============================================================ */
+let productEditId = null;
+let productSearch = '';
+
+function viewProducts(){
+  if(!isAdmin()){
+    return `<div class="card"><div class="empty">${icon('lock')}<div>Products are restricted to administrators.</div></div></div>`;
+  }
+  const q = productSearch.toLowerCase();
+  const list = DB.products.filter(p =>
+    !q || p.name.toLowerCase().includes(q) || String(p.category || '').toLowerCase().includes(q)
+  );
+  const editing = productEditId ? DB.products.find(p => p.id === productEditId) : null;
+  const stockValue  = DB.products.reduce((a,p) => a + num(p.qty) * num(p.buyingPrice), 0);
+  const retailValue = DB.products.reduce((a,p) => a + num(p.qty) * num(p.sellingPrice), 0);
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Products &amp; Inventory</h2>
+        <p>${DB.products.length} products · Stock value ${moneyShort(stockValue)} · Retail value ${moneyShort(retailValue)}</p>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon(editing ? 'edit' : 'plus','sm')} ${editing ? 'Edit Product' : 'Add New Product'}</h3>
+        <form id="productForm">
+          <div class="field">
+            <label for="pName">Product Name *</label>
+            <input id="pName" required placeholder="e.g. Tusker Lager 500ml" value="${esc(editing?.name || '')}">
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="pCat">Category</label>
+              <input id="pCat" placeholder="Beer / Spirits / Wine…" value="${esc(editing?.category || '')}">
+            </div>
+            <div class="field">
+              <label for="pQty">Quantity in Stock</label>
+              <input id="pQty" type="number" min="0" step="1" value="${editing ? num(editing.qty) : 0}">
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="pBuy">Buying Price</label>
+              <input id="pBuy" type="number" min="0" step="0.01" placeholder="0.00" value="${editing ? num(editing.buyingPrice) : ''}">
+            </div>
+            <div class="field">
+              <label for="pSell">Selling Price</label>
+              <input id="pSell" type="number" min="0" step="0.01" placeholder="0.00" value="${editing ? num(editing.sellingPrice) : ''}">
+            </div>
+          </div>
+          <div class="field">
+            <label for="pLow">Low Stock Alert Level</label>
+            <input id="pLow" type="number" min="0" step="1" value="${editing ? num(editing.lowStock) : num(DB.settings.defaultLowStock)}">
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="btn primary">${icon('check','sm')} ${editing ? 'Update Product' : 'Add Product'}</button>
+            ${editing ? `<button type="button" class="btn ghost" id="cancelEdit">Cancel</button>` : ''}
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>${icon('box2','sm')} Record Stock Purchase</h3>
+        <p style="color:var(--muted);font-size:12.5px;margin:-4px 0 14px">Add incoming stock and update the buying price.</p>
+        <form id="purchaseForm">
+          <div class="field">
+            <label for="spProduct">Product *</label>
+            <select id="spProduct" required>
+              <option value="">— Select product —</option>
+              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${num(p.qty)} in stock)</option>`).join('')}
+            </select>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="spQty">Quantity Received *</label>
+              <input id="spQty" type="number" min="1" step="1" required placeholder="0">
+            </div>
+            <div class="field">
+              <label for="spBuy">Buying Price / Unit</label>
+              <input id="spBuy" type="number" min="0" step="0.01" placeholder="0.00">
+            </div>
+          </div>
+          <div class="field">
+            <label for="spDate">Date</label>
+            <input id="spDate" type="date" value="${todayISO()}">
+          </div>
+          <label class="check-row">
+            <input type="checkbox" id="spRecord" checked>
+            Also record as a <b style="color:var(--gold)">Money Out</b> expense
+          </label>
+          <button type="submit" class="btn primary block">${icon('plus','sm')} Add Stock</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="search-wrap">
+          ${icon('search')}
+          <input id="prodSearch" placeholder="Search products…" value="${esc(productSearch)}">
+        </div>
+        <span class="pill grey">${list.length} shown</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th><th>Category</th><th class="num">Qty</th>
+              <th class="num">Buying</th><th class="num">Selling</th>
+              <th class="num">Margin</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.length ? list.map(p => {
+              const margin = num(p.sellingPrice) - num(p.buyingPrice);
+              const pct = num(p.buyingPrice) > 0 ? (margin / num(p.buyingPrice) * 100) : 0;
+              const status = num(p.qty) <= 0 ? '<span class="pill red">Out of stock</span>'
+                           : num(p.qty) <= num(p.lowStock) ? '<span class="pill amber">Low stock</span>'
+                           : '<span class="pill green">In stock</span>';
+              return `<tr>
+                <td><b>${esc(p.name)}</b></td>
+                <td style="color:var(--muted)">${esc(p.category || '—')}</td>
+                <td class="num">${num(p.qty)}</td>
+                <td class="num">${money(p.buyingPrice)}</td>
+                <td class="num">${money(p.sellingPrice)}</td>
+                <td class="num" style="color:${margin >= 0 ? 'var(--success)' : 'var(--danger)'}">
+                  ${money(margin)} <small style="opacity:.7">(${pct.toFixed(0)}%)</small>
+                </td>
+                <td>${status}</td>
+                <td>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn sm ghost" data-edit="${p.id}" title="Edit">${icon('edit','sm')}</button>
+                    <button class="btn sm danger" data-del="${p.id}" title="Delete">${icon('trash','sm')}</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="8"><div class="empty">${icon('box')}<div>No products found</div></div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindProducts(){
+  if(!isAdmin()) return;
+
+  $('#productForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const data = {
+      name: $('#pName').value.trim(),
+      category: $('#pCat').value.trim(),
+      qty: num($('#pQty').value),
+      buyingPrice: num($('#pBuy').value),
+      sellingPrice: num($('#pSell').value),
+      lowStock: num($('#pLow').value)
+    };
+    if(!data.name) return toast('Product name is required', 'err');
+
+    if(productEditId){
+      const p = DB.products.find(x => x.id === productEditId);
+      if(p) Object.assign(p, data);
+      productEditId = null;
+      toast('Product updated', 'ok');
+    }else{
+      DB.products.push(Object.assign({id:uid()}, data));
+      toast('Product added', 'ok');
+    }
+    commit();
+  });
+
+  const cancel = $('#cancelEdit');
+  if(cancel) cancel.addEventListener('click', () => { productEditId = null; render(); });
+
+  $$('[data-edit]').forEach(b => b.addEventListener('click', () => {
+    productEditId = b.dataset.edit;
+    render();
+    $('#view').scrollTop = 0;
+  }));
+
+  $$('[data-del]').forEach(b => b.addEventListener('click', () => {
+    const p = DB.products.find(x => x.id === b.dataset.del);
+    if(!p) return;
+    if(!confirm(`Delete "${p.name}"? This cannot be undone.`)) return;
+    DB.products = DB.products.filter(x => x.id !== p.id);
+    if(productEditId === p.id) productEditId = null;
+    toast('Product deleted', 'ok');
+    commit();
+  }));
+
+  $('#prodSearch').addEventListener('input', e => {
+    productSearch = e.target.value;
+    rerenderKeepingFocus('#prodSearch');
+  });
+
+  $('#spProduct').addEventListener('change', e => {
+    const p = DB.products.find(x => x.id === e.target.value);
+    if(p) $('#spBuy').value = num(p.buyingPrice);
+  });
+
+  $('#purchaseForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const p = DB.products.find(x => x.id === $('#spProduct').value);
+    if(!p) return toast('Select a product', 'err');
+    const qty = num($('#spQty').value);
+    const buy = num($('#spBuy').value) || num(p.buyingPrice);
+    const date = $('#spDate').value || todayISO();
+    if(qty <= 0) return toast('Quantity must be greater than 0', 'err');
+
+    p.qty = num(p.qty) + qty;
+    p.buyingPrice = buy;
+
+    if($('#spRecord').checked){
+      DB.moneyOut.push({
+        id: uid(), date,
+        description: `Stock purchase — ${p.name} × ${qty}`,
+        amount: round2(qty * buy),
+        category: 'Stock Purchase',
+        ts: Date.now()
+      });
+    }
+    toast(`Added ${qty} × ${p.name}`, 'ok');
+    commit();
+  });
+}
+
+/* ============================================================
+   13. SALES RECORDING
+   ============================================================ */
+let salesSearch = '';
+let salesFilterMethod = '';
+let salesFilterDate = '';
+
+function viewSales(){
+  const t = todayISO();
+  const todaySales = DB.sales.filter(s => s.date === t);
+  const todayTotal = todaySales.reduce((a,s) => a + num(s.total), 0);
+
+  let list = [...DB.sales].sort((a,b) => (b.ts||0) - (a.ts||0));
+  if(salesSearch){
+    const q = salesSearch.toLowerCase();
+    list = list.filter(s =>
+      String(s.productName).toLowerCase().includes(q) ||
+      String(s.customerName || '').toLowerCase().includes(q) ||
+      String(s.customerPhone || '').includes(q)
+    );
+  }
+  if(salesFilterMethod) list = list.filter(s => s.paymentMethod === salesFilterMethod);
+  if(salesFilterDate)   list = list.filter(s => s.date === salesFilterDate);
+  list = list.slice(0, 200);
+
+  const canDelete = isAdmin();
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Sales Recording</h2>
+        <p>Today: <b style="color:var(--gold)">${money(todayTotal)}</b> from ${todaySales.length} sale(s)</p>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('cart','sm')} New Sale</h3>
+        <form id="saleForm">
+          <div class="row">
+            <div class="field">
+              <label for="sDate">Date *</label>
+              <input id="sDate" type="date" value="${todayISO()}" required>
+            </div>
+            <div class="field">
+              <label for="sProduct">Product *</label>
+              <select id="sProduct" required>
+                <option value="">— Select product —</option>
+                ${DB.products.map(p => `<option value="${p.id}" ${num(p.qty) <= 0 ? 'disabled' : ''}>
+                  ${esc(p.name)}${num(p.qty) <= 0 ? ' (out of stock)' : ''}
+                </option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div id="stockHint" style="font-size:12px;color:var(--muted);margin:-4px 0 12px"></div>
+
+          <div class="row">
+            <div class="field">
+              <label for="sQty">Quantity *</label>
+              <input id="sQty" type="number" min="1" step="1" value="1" required>
+            </div>
+            <div class="field">
+              <label for="sPrice">Unit Price *</label>
+              <input id="sPrice" type="number" min="0" step="0.01" required placeholder="0.00">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="sMethod">Payment Method *</label>
+            <select id="sMethod" required>
+              ${PAYMENT_METHODS.map(m => `<option value="${m}">${m === 'Credit' ? 'Credit (Customer Debt)' : m}</option>`).join('')}
+            </select>
+          </div>
+
+          <div id="creditBlock" class="hidden" style="background:var(--surface2);border:1px dashed rgba(224,87,79,.4);border-radius:12px;padding:14px;margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px;color:var(--danger);font-weight:700;font-size:12.5px;margin-bottom:12px">
+              ${icon('users','sm')} Credit Sale — Customer Details Required
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="cName">Customer Name *</label>
+                <input id="cName" placeholder="Full name" list="customerList">
+                <datalist id="customerList">
+                  ${DB.customers.map(c => `<option value="${esc(c.name)}">`).join('')}
+                </datalist>
+              </div>
+              <div class="field">
+                <label for="cPhone">Phone Number *</label>
+                <input id="cPhone" placeholder="07XX XXX XXX" inputmode="tel">
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="cOwed">Amount Owed *</label>
+                <input id="cOwed" type="number" min="0" step="0.01" placeholder="0.00">
+              </div>
+              <div class="field">
+                <label for="cDue">Due Date</label>
+                <input id="cDue" type="date" value="${addDays(todayISO(), 14)}">
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label for="cDepositMethod">Method for Amount Paid Now</label>
+              <select id="cDepositMethod">
+                <option>Cash</option><option>M-Pesa</option><option>Bank</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--surface2);border-radius:12px;margin-bottom:14px">
+            <span style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">Total Amount</span>
+            <b id="sTotal" style="font-size:22px;color:var(--gold)">${money(0)}</b>
+          </div>
+
+          <div class="btn-row">
+            <button type="submit" class="btn primary" style="flex:1">${icon('check','sm')} Record Sale</button>
+            <button type="button" class="btn ghost" id="sClear">Clear</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>${icon('chart','sm')} Sales Summary</h3>
+        ${PAYMENT_METHODS.map(m => {
+          const rows = DB.sales.filter(s => s.paymentMethod === m);
+          const total = rows.reduce((a,s) => a + num(s.total), 0);
+          const todayTot = rows.filter(s => s.date === t).reduce((a,s) => a + num(s.total), 0);
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--border)">
+            <div>${payPill(m)}<div style="font-size:11px;color:var(--muted);margin-top:3px">${rows.length} transaction(s)</div></div>
+            <div style="text-align:right">
+              <b>${money(total)}</b>
+              <div style="font-size:11px;color:var(--success)">today ${moneyShort(todayTot)}</div>
+            </div>
+          </div>`;
+        }).join('')}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0 0">
+          <b>All-time Revenue</b>
+          <b style="color:var(--gold);font-size:18px">${money(DB.sales.reduce((a,s) => a + num(s.total), 0))}</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('file','sm')} Sales History</h3>
+      <div class="toolbar">
+        <div class="search-wrap">
+          ${icon('search')}
+          <input id="salesSearch" placeholder="Search product or customer…" value="${esc(salesSearch)}">
+        </div>
+        <select id="filterMethod" style="max-width:170px">
+          <option value="">All payments</option>
+          ${PAYMENT_METHODS.map(m => `<option ${salesFilterMethod === m ? 'selected' : ''}>${m}</option>`).join('')}
+        </select>
+        <input id="filterDate" type="date" value="${salesFilterDate}" style="max-width:165px">
+        <button class="btn ghost sm" id="clearFilters">Clear</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">Unit Price</th>
+                <th class="num">Total</th><th>Payment</th><th>Customer</th>${canDelete ? '<th></th>' : ''}</tr>
+          </thead>
+          <tbody>
+            ${list.length ? list.map(s => `
+              <tr>
+                <td>${fmtDate(s.date)}</td>
+                <td><b>${esc(s.productName)}</b></td>
+                <td class="num">${num(s.qty)}</td>
+                <td class="num">${money(s.unitPrice)}</td>
+                <td class="num"><b>${money(s.total)}</b></td>
+                <td>${payPill(s.paymentMethod)}</td>
+                <td>${s.customerName
+                      ? esc(s.customerName) + `<div style="font-size:11px;color:var(--muted)">${esc(s.customerPhone || '')}</div>`
+                      : '—'}</td>
+                ${canDelete ? `<td><button class="btn sm danger" data-delsale="${s.id}">${icon('trash','sm')}</button></td>` : ''}
+              </tr>`).join('') : `<tr><td colspan="${canDelete ? 8 : 7}"><div class="empty">${icon('cart')}<div>No sales found</div></div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${!canDelete ? `<p style="color:var(--muted);font-size:11.5px;margin:10px 0 0">${icon('lock','sm')} Only administrators can delete sales.</p>` : ''}
+    </div>
+  `;
+}
+
+function bindSales(){
+  const prodSel  = $('#sProduct');
+  const qtyIn    = $('#sQty');
+  const priceIn  = $('#sPrice');
+  const methodSel= $('#sMethod');
+  const creditBlock = $('#creditBlock');
+  const totalEl  = $('#sTotal');
+  const owedIn   = $('#cOwed');
+  const hint     = $('#stockHint');
+
+  const selectedProduct = () => DB.products.find(p => p.id === prodSel.value);
+
+  function updateTotal(){
+    const total = round2(num(qtyIn.value) * num(priceIn.value));
+    totalEl.textContent = money(total);
+    if(methodSel.value === 'Credit' && !owedIn.dataset.touched){
+      owedIn.value = total.toFixed(2);
+    }
+  }
+  function updateHint(){
+    const p = selectedProduct();
+    if(!p){ hint.textContent = ''; return; }
+    const available = num(p.qty);
+    const requested = num(qtyIn.value);
+    const over = requested > available;
+    hint.innerHTML = `<span style="color:${over ? 'var(--danger)' : 'var(--muted)'}">
+      Available: <b>${available}</b>${p.category ? ' · ' + esc(p.category) : ''}${over ? ' — not enough stock!' : ''}
+    </span>`;
+  }
+
+  prodSel.addEventListener('change', () => {
+    const p = selectedProduct();
+    if(p) priceIn.value = num(p.sellingPrice).toFixed(2);
+    updateHint();
+    updateTotal();
+  });
+  qtyIn.addEventListener('input', () => { updateHint(); updateTotal(); });
+  priceIn.addEventListener('input', updateTotal);
+
+  methodSel.addEventListener('change', () => {
+    const isCredit = methodSel.value === 'Credit';
+    creditBlock.classList.toggle('hidden', !isCredit);
+    ['#cName','#cPhone','#cOwed'].forEach(sel => { $(sel).required = isCredit; });
+    if(!isCredit) owedIn.dataset.touched = '';
+    updateTotal();
+  });
+  owedIn.addEventListener('input', e => { e.target.dataset.touched = '1'; });
+
+  $('#sClear').addEventListener('click', () => {
+    $('#saleForm').reset();
+    creditBlock.classList.add('hidden');
+    hint.textContent = '';
+    totalEl.textContent = money(0);
+    owedIn.dataset.touched = '';
+    $('#sDate').value = todayISO();
+    $('#cDue').value = addDays(todayISO(), 14);
+  });
+
+  $('#saleForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const p = selectedProduct();
+    if(!p) return toast('Select a product', 'err');
+
+    const qty    = num(qtyIn.value);
+    const price  = num(priceIn.value);
+    const total  = round2(qty * price);
+    const method = methodSel.value;
+    const date   = $('#sDate').value || todayISO();
+
+    if(qty <= 0)            return toast('Quantity must be greater than 0', 'err');
+    if(qty > num(p.qty))    return toast(`Only ${num(p.qty)} unit(s) of ${p.name} in stock`, 'err');
+    if(price < 0)           return toast('Invalid unit price', 'err');
+
+    let credit = null;
+    if(method === 'Credit'){
+      const name  = $('#cName').value.trim();
+      const phone = $('#cPhone').value.trim();
+      const owed  = round2(num(owedIn.value));
+      const due   = $('#cDue').value || addDays(date, 14);
+      const depositMethod = $('#cDepositMethod').value;
+
+      if(!name)        return toast('Customer name is required for credit sales', 'err');
+      if(!phone)       return toast('Phone number is required for credit sales', 'err');
+      if(owed <= 0)    return toast('Amount owed must be greater than 0', 'err');
+      if(owed > total) return toast('Amount owed cannot exceed the sale total', 'err');
+
+      credit = {name, phone, owed, due, depositMethod, paidNow: round2(total - owed)};
+    }
+
+    p.qty = num(p.qty) - qty;
+
+    const sale = {
+      id: uid(), ts: Date.now(), date,
+      productId: p.id, productName: p.name,
+      qty, unitPrice: price, total,
+      paymentMethod: method,
+      userId: session.id, userName: session.name
+    };
+
+    if(credit){
+      let cust = DB.customers.find(c => c.phone === credit.phone);
+      if(cust) cust.name = credit.name;
+      else {
+        cust = {id: uid(), name: credit.name, phone: credit.phone, createdAt: Date.now()};
+        DB.customers.push(cust);
+      }
+
+      sale.customerId = cust.id;
+      sale.customerName = credit.name;
+      sale.customerPhone = credit.phone;
+
+      const balance = round2(credit.owed - credit.paidNow);
+      DB.debts.push({
+        id: uid(), ts: Date.now(),
+        saleId: sale.id,
+        customerId: cust.id,
+        customerName: credit.name,
+        phone: credit.phone,
+        productName: p.name,
+        amountOwed: credit.owed,
+        amountPaid: credit.paidNow,
+        balance,
+        dueDate: credit.due,
+        date,
+        status: balance <= 0 ? 'Paid' : (credit.paidNow > 0 ? 'Partial' : 'Unpaid')
+      });
+
+      if(credit.paidNow > 0){
+        DB.moneyIn.push({
+          id: uid(), date, ts: Date.now(),
+          saleId: sale.id,
+          description: `Partial payment — ${p.name} (${credit.name})`,
+          amount: credit.paidNow,
+          source: credit.depositMethod
+        });
+      }
+
+      DB.sales.push(sale);
+      persist();
+      toast(`Credit sale recorded · ${credit.name} owes ${money(credit.owed)}`, 'ok');
+
+      currentSection = 'customers';
+      render();
+      $('#view').scrollTop = 0;
+      return;
+    }
+
+    DB.sales.push(sale);
+    DB.moneyIn.push({
+      id: uid(), date, ts: Date.now(),
+      saleId: sale.id,
+      description: `Sale — ${p.name} × ${qty}`,
+      amount: total,
+      source: method
+    });
+    toast(`Sale recorded · ${money(total)} via ${method}`, 'ok');
+    commit();
+  });
+
+  $('#salesSearch').addEventListener('input', e => {
+    salesSearch = e.target.value;
+    rerenderKeepingFocus('#salesSearch');
+  });
+  $('#filterMethod').addEventListener('change', e => { salesFilterMethod = e.target.value; render(); });
+  $('#filterDate').addEventListener('change', e => { salesFilterDate = e.target.value; render(); });
+  $('#clearFilters').addEventListener('click', () => {
+    salesSearch = salesFilterMethod = salesFilterDate = '';
+    render();
+  });
+
+  if(isAdmin()){
+    $$('[data-delsale]').forEach(b => b.addEventListener('click', () => {
+      const s = DB.sales.find(x => x.id === b.dataset.delsale);
+      if(!s) return;
+      if(!confirm(`Delete this sale of ${s.productName} (${money(s.total)})? Stock will be restored.`)) return;
+      const p = DB.products.find(x => x.id === s.productId);
+      if(p) p.qty = num(p.qty) + num(s.qty);
+      const debt = DB.debts.find(d => d.saleId === s.id);
+      if(debt){
+        const repayments = DB.repayments.filter(r => r.debtId === debt.id);
+        if(repayments.length === 0) DB.debts = DB.debts.filter(d => d.id !== debt.id);
+      }
+      DB.moneyIn = DB.moneyIn.filter(m => m.saleId !== s.id);
+      DB.sales = DB.sales.filter(x => x.id !== s.id);
+      toast('Sale deleted and stock restored', 'ok');
+      commit();
+    }));
+  }
+}
+
+/* ============================================================
+   14. CUSTOMERS & DEBTS
+   ============================================================ */
+let debtSearch = '';
+let debtFilter = 'unpaid';
+
+function viewCustomers(){
+  const totalOwed      = DB.debts.reduce((a,d) => a + num(d.balance), 0);
+  const totalCollected = DB.debts.reduce((a,d) => a + num(d.amountPaid), 0);
+  const openDebts      = DB.debts.filter(d => num(d.balance) > 0);
+  const overdueCount   = openDebts.filter(d => d.dueDate && d.dueDate < todayISO()).length;
+
+  let list = [...DB.debts].sort((a,b) => (b.ts||0) - (a.ts||0));
+  if(debtFilter === 'unpaid')       list = list.filter(d => num(d.balance) > 0);
+  else if(debtFilter === 'paid')    list = list.filter(d => num(d.balance) <= 0);
+  else if(debtFilter === 'overdue') list = list.filter(d => num(d.balance) > 0 && d.dueDate && d.dueDate < todayISO());
+
+  if(debtSearch){
+    const q = debtSearch.toLowerCase();
+    list = list.filter(d =>
+      String(d.customerName).toLowerCase().includes(q) || String(d.phone || '').includes(q)
+    );
+  }
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Customers &amp; Debts</h2>
+        <p>Track credit sales, repayments and outstanding balances</p>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Outstanding Balance', value:moneyShort(totalOwed), sub:`${openDebts.length} open account(s)`, tone:'red', glyph:'users'})}
+      ${kpiCard({label:'Total Collected', value:moneyShort(totalCollected), sub:'Across all debts', tone:'green', glyph:'check'})}
+      ${kpiCard({label:'Overdue Accounts', value:overdueCount, sub:'Past their due date', tone:'amber', glyph:'alert'})}
+      ${kpiCard({label:'Registered Customers', value:DB.customers.length, sub:'With contact details', tone:'blue', glyph:'users'})}
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3>${icon('cash','sm')} Record Debt Repayment</h3>
+      ${openDebts.length ? `
+        <form id="repayForm">
+          <div class="row">
+            <div class="field">
+              <label for="rDebt">Customer / Debt *</label>
+              <select id="rDebt" required>
+                <option value="">— Select account —</option>
+                ${openDebts.map(d => `<option value="${d.id}">${esc(d.customerName)} · ${esc(d.phone)} · owes ${money(d.balance)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label for="rAmount">Amount Paying *</label>
+              <input id="rAmount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="rMethod">Payment Method</label>
+              <select id="rMethod"><option>Cash</option><option>M-Pesa</option><option>Bank</option></select>
+            </div>
+            <div class="field">
+              <label for="rDate">Date</label>
+              <input id="rDate" type="date" value="${todayISO()}">
+            </div>
+          </div>
+          <button type="submit" class="btn primary">${icon('check','sm')} Record Repayment</button>
+        </form>`
+      : `<div class="empty">${icon('check')}<div>No outstanding debts — everything is settled 🎉</div></div>`}
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="search-wrap">
+          ${icon('search')}
+          <input id="debtSearch" placeholder="Search customer or phone…" value="${esc(debtSearch)}">
+        </div>
+        <select id="debtFilter" style="max-width:170px">
+          <option value="unpaid"  ${debtFilter === 'unpaid'  ? 'selected' : ''}>Unpaid only</option>
+          <option value="overdue" ${debtFilter === 'overdue' ? 'selected' : ''}>Overdue</option>
+          <option value="paid"    ${debtFilter === 'paid'    ? 'selected' : ''}>Settled</option>
+          <option value="all"     ${debtFilter === 'all'     ? 'selected' : ''}>All accounts</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Customer</th><th>Phone</th><th class="num">Owed</th><th class="num">Paid</th>
+                <th class="num">Balance</th><th>Due Date</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${list.length ? list.map(d => {
+              const overdue = num(d.balance) > 0 && d.dueDate && d.dueDate < todayISO();
+              const statusPill = num(d.balance) <= 0 ? '<span class="pill green">Paid</span>'
+                               : num(d.amountPaid) > 0 ? '<span class="pill amber">Partial</span>'
+                               : '<span class="pill red">Unpaid</span>';
+              return `<tr>
+                <td><b>${esc(d.customerName)}</b><div style="font-size:11px;color:var(--muted)">${esc(d.productName || '')}</div></td>
+                <td>${esc(d.phone)}</td>
+                <td class="num">${money(d.amountOwed)}</td>
+                <td class="num" style="color:var(--success)">${money(d.amountPaid)}</td>
+                <td class="num"><b style="color:${num(d.balance) > 0 ? 'var(--danger)' : 'var(--success)'}">${money(d.balance)}</b></td>
+                <td>${fmtDate(d.dueDate)} ${overdue ? '<span class="pill red" style="margin-left:4px">Overdue</span>' : ''}</td>
+                <td>${statusPill}</td>
+                <td>
+                  <div style="display:flex;gap:6px">
+                    ${num(d.balance) > 0 ? `<button class="btn sm primary" data-pay="${d.id}">Pay</button>` : ''}
+                    <button class="btn sm danger" data-deldebt="${d.id}">${icon('trash','sm')}</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="8"><div class="empty">${icon('users')}<div>No debt records found</div></div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>${icon('users','sm')} Customer Directory</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Phone</th><th class="num">Total Owed</th><th class="num">Purchases</th></tr></thead>
+          <tbody>
+            ${DB.customers.length ? DB.customers.map(c => {
+              const owed = DB.debts.filter(d => d.customerId === c.id).reduce((a,d) => a + num(d.balance), 0);
+              const purchases = DB.sales.filter(s => s.customerId === c.id).reduce((a,s) => a + num(s.total), 0);
+              return `<tr>
+                <td><b>${esc(c.name)}</b></td>
+                <td>${esc(c.phone)}</td>
+                <td class="num" style="color:${owed > 0 ? 'var(--danger)' : 'var(--success)'}">${money(owed)}</td>
+                <td class="num">${money(purchases)}</td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="4"><div class="empty">No customers yet — they are created automatically on credit sales</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindCustomers(){
+  const form = $('#repayForm');
+  if(form){
+    const sel = $('#rDebt');
+    sel.addEventListener('change', () => {
+      const d = DB.debts.find(x => x.id === sel.value);
+      if(d) $('#rAmount').value = num(d.balance).toFixed(2);
+    });
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const d = DB.debts.find(x => x.id === $('#rDebt').value);
+      if(!d) return toast('Select a debt account', 'err');
+      const amount = round2(num($('#rAmount').value));
+      const method = $('#rMethod').value;
+      const date   = $('#rDate').value || todayISO();
+      if(amount <= 0)               return toast('Enter a valid amount', 'err');
+      if(amount > num(d.balance))   return toast(`Amount exceeds balance of ${money(d.balance)}`, 'err');
+
+      d.amountPaid = round2(num(d.amountPaid) + amount);
+      d.balance    = round2(num(d.amountOwed) - num(d.amountPaid));
+      d.status     = d.balance <= 0 ? 'Paid' : (num(d.amountPaid) > 0 ? 'Partial' : 'Unpaid');
+
+      DB.repayments.push({
+        id: uid(), ts: Date.now(), debtId: d.id,
+        customerName: d.customerName, amount, date, method
+      });
+      DB.moneyIn.push({
+        id: uid(), date, ts: Date.now(),
+        debtId: d.id,
+        description: `Debt repayment — ${d.customerName}`,
+        amount, source: method
+      });
+      toast(`Repayment of ${money(amount)} recorded`, 'ok');
+      commit();
+    });
+  }
+
+  $$('[data-pay]').forEach(b => b.addEventListener('click', () => {
+    const d = DB.debts.find(x => x.id === b.dataset.pay);
+    if(!d) return;
+    const sel = $('#rDebt');
+    if(!sel) return;
+    sel.value = d.id;
+    $('#rAmount').value = num(d.balance).toFixed(2);
+    $('#rAmount').focus();
+    $('#view').scrollTo({top:0, behavior:'smooth'});
+  }));
+
+  $$('[data-deldebt]').forEach(b => b.addEventListener('click', () => {
+    const d = DB.debts.find(x => x.id === b.dataset.deldebt);
+    if(!d) return;
+    if(!confirm(`Delete the debt record for ${d.customerName}?`)) return;
+    DB.debts = DB.debts.filter(x => x.id !== d.id);
+    DB.repayments = DB.repayments.filter(r => r.debtId !== d.id);
+    toast('Debt record deleted', 'ok');
+    commit();
+  }));
+
+  $('#debtSearch').addEventListener('input', e => {
+    debtSearch = e.target.value;
+    rerenderKeepingFocus('#debtSearch');
+  });
+  $('#debtFilter').addEventListener('change', e => { debtFilter = e.target.value; render(); });
+}
+
+/* ============================================================
+   15a. MONEY IN  (admin only)
+   ============================================================ */
+const INCOME_SOURCES = ['Sales','Debt Repayment','Capital Injection','Refund','Other'];
+
+function viewMoneyIn(){
+  if(!isAdmin()){
+    return `<div class="card"><div class="empty">${icon('lock')}<div>Money In is restricted to administrators.</div></div></div>`;
+  }
+  const t = todayISO();
+  const month = t.slice(0,7);
+  const inTotal  = DB.moneyIn.reduce((a,m) => a + num(m.amount), 0);
+  const todayIn  = DB.moneyIn.filter(m => m.date === t).reduce((a,m) => a + num(m.amount), 0);
+  const monthIn  = DB.moneyIn.filter(m => String(m.date||'').startsWith(month)).reduce((a,m) => a + num(m.amount), 0);
+  const inList = [...DB.moneyIn].sort((a,b) => (b.ts||0) - (a.ts||0)).slice(0, 100);
+
+  const bySource = {};
+  DB.moneyIn.forEach(m => {
+    const s = m.source || 'Other';
+    bySource[s] = (bySource[s] || 0) + num(m.amount);
+  });
+  const maxSource = Math.max(1, ...Object.values(bySource));
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Money In</h2>
+        <p>All incoming funds — sales receipts, debt repayments and other income</p>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Total Money In', value:moneyShort(inTotal), sub:'All time', tone:'green', glyph:'cashIn'})}
+      ${kpiCard({label:'Today', value:moneyShort(todayIn), sub:`${DB.moneyIn.filter(m => m.date === t).length} entr(ies)`, tone:'gold', glyph:'trend'})}
+      ${kpiCard({label:'This Month', value:moneyShort(monthIn), sub:month, tone:'blue', glyph:'chart'})}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('cashIn','sm')} Record Money In</h3>
+        <form id="moneyInForm">
+          <div class="field">
+            <label for="miDesc">Description *</label>
+            <input id="miDesc" required placeholder="e.g. Capital injection">
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="miAmount">Amount *</label>
+              <input id="miAmount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+            </div>
+            <div class="field">
+              <label for="miSource">Source *</label>
+              <select id="miSource" required>${INCOME_SOURCES.map(s => `<option>${s}</option>`).join('')}</select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="miDate">Date</label>
+            <input id="miDate" type="date" value="${todayISO()}">
+          </div>
+          <button type="submit" class="btn primary block">${icon('plus','sm')} Add Money In</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>${icon('chart','sm')} Money In by Source</h3>
+        ${Object.keys(bySource).length
+          ? Object.entries(bySource).sort((a,b) => b[1] - a[1]).map(([src, val]) => `
+              <div class="bar-row">
+                <div class="nm">${esc(src)}</div>
+                <div class="bar-track"><div class="bar-fill green" style="width:${(val / maxSource * 100).toFixed(1)}%"></div></div>
+                <div class="vl">${moneyShort(val)}</div>
+              </div>`).join('')
+          : `<div class="empty">No money-in records yet</div>`}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('file','sm')} Money In — History</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th>Source</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody>
+            ${inList.length ? inList.map(m => `
+              <tr>
+                <td>${fmtDate(m.date)}</td>
+                <td>${esc(m.description)}</td>
+                <td><span class="pill grey">${esc(m.source)}</span></td>
+                <td class="num" style="color:var(--success)"><b>${money(m.amount)}</b></td>
+                <td><button class="btn sm danger" data-delin="${m.id}">${icon('trash','sm')}</button></td>
+              </tr>`).join('') : `<tr><td colspan="5"><div class="empty">No entries</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindMoneyIn(){
+  if(!isAdmin()) return;
+  $('#moneyInForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const amount = round2(num($('#miAmount').value));
+    if(amount <= 0) return toast('Enter a valid amount', 'err');
+    DB.moneyIn.push({
+      id: uid(), ts: Date.now(),
+      description: $('#miDesc').value.trim() || 'Money In',
+      amount,
+      source: $('#miSource').value,
+      date: $('#miDate').value || todayISO()
+    });
+    toast('Money In recorded', 'ok');
+    commit();
+  });
+
+  $$('[data-delin]').forEach(b => b.addEventListener('click', () => {
+    if(!confirm('Delete this Money In entry?')) return;
+    DB.moneyIn = DB.moneyIn.filter(x => x.id !== b.dataset.delin);
+    commit();
+  }));
+}
+
+/* ============================================================
+   15b. MONEY OUT  (all users)
+   ============================================================ */
+const EXPENSE_CATEGORIES = ['Rent','Salaries','Utilities','Transport','Maintenance','Stock Purchase','Licenses','Marketing','Miscellaneous'];
+
+function viewMoneyOut(){
+  const t = todayISO();
+  const month = t.slice(0,7);
+  const outTotal = DB.moneyOut.reduce((a,m) => a + num(m.amount), 0);
+  const todayOut = DB.moneyOut.filter(m => m.date === t).reduce((a,m) => a + num(m.amount), 0);
+  const monthOut = DB.moneyOut.filter(m => String(m.date||'').startsWith(month)).reduce((a,m) => a + num(m.amount), 0);
+  const outList = [...DB.moneyOut].sort((a,b) => (b.ts||0) - (a.ts||0)).slice(0, 100);
+
+  const byCategory = {};
+  DB.moneyOut.forEach(m => {
+    const c = m.category || 'Miscellaneous';
+    byCategory[c] = (byCategory[c] || 0) + num(m.amount);
+  });
+  const maxCategory = Math.max(1, ...Object.values(byCategory));
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Money Out</h2>
+        <p>Track every expense — rent, salaries, utilities, stock purchases and more</p>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Total Money Out', value:moneyShort(outTotal), sub:'All time', tone:'red', glyph:'cashOut'})}
+      ${kpiCard({label:'Today', value:moneyShort(todayOut), sub:`${DB.moneyOut.filter(m => m.date === t).length} entr(ies)`, tone:'amber', glyph:'trend'})}
+      ${kpiCard({label:'This Month', value:moneyShort(monthOut), sub:month, tone:'blue', glyph:'chart'})}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('cashOut','sm')} Record Money Out</h3>
+        <form id="moneyOutForm">
+          <div class="field">
+            <label for="moDesc">Description *</label>
+            <input id="moDesc" required placeholder="e.g. Monthly shop rent">
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="moAmount">Amount *</label>
+              <input id="moAmount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+            </div>
+            <div class="field">
+              <label for="moCat">Expense Category *</label>
+              <select id="moCat" required>${EXPENSE_CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="moDate">Date</label>
+            <input id="moDate" type="date" value="${todayISO()}">
+          </div>
+          <button type="submit" class="btn danger block">${icon('plus','sm')} Add Money Out</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>${icon('chart','sm')} Expenses by Category</h3>
+        ${Object.keys(byCategory).length
+          ? Object.entries(byCategory).sort((a,b) => b[1] - a[1]).map(([cat, val]) => `
+              <div class="bar-row">
+                <div class="nm">${esc(cat)}</div>
+                <div class="bar-track"><div class="bar-fill red" style="width:${(val / maxCategory * 100).toFixed(1)}%"></div></div>
+                <div class="vl">${moneyShort(val)}</div>
+              </div>`).join('')
+          : `<div class="empty">No expenses recorded yet</div>`}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('file','sm')} Money Out — History</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody>
+            ${outList.length ? outList.map(m => `
+              <tr>
+                <td>${fmtDate(m.date)}</td>
+                <td>${esc(m.description)}</td>
+                <td><span class="pill grey">${esc(m.category)}</span></td>
+                <td class="num" style="color:var(--danger)"><b>${money(m.amount)}</b></td>
+                <td><button class="btn sm danger" data-delout="${m.id}">${icon('trash','sm')}</button></td>
+              </tr>`).join('') : `<tr><td colspan="5"><div class="empty">No entries</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindMoneyOut(){
+  $('#moneyOutForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const amount = round2(num($('#moAmount').value));
+    if(amount <= 0) return toast('Enter a valid amount', 'err');
+    DB.moneyOut.push({
+      id: uid(), ts: Date.now(),
+      description: $('#moDesc').value.trim() || 'Expense',
+      amount,
+      category: $('#moCat').value,
+      date: $('#moDate').value || todayISO()
+    });
+    toast('Money Out recorded', 'ok');
+    commit();
+  });
+
+  $$('[data-delout]').forEach(b => b.addEventListener('click', () => {
+    if(!confirm('Delete this Money Out entry?')) return;
+    DB.moneyOut = DB.moneyOut.filter(x => x.id !== b.dataset.delout);
+    commit();
+  }));
+}
+
+/* ============================================================
+   16. RECONCILIATION  (admin only)
+   ============================================================ */
+function viewReconcile(){
+  if(!isAdmin()){
+    return `<div class="card"><div class="empty">${icon('lock')}<div>Reconciliation is restricted to administrators.</div></div></div>`;
+  }
+  const list = [...DB.reconciliations].sort((a,b) => (b.ts||0) - (a.ts||0)).slice(0, 60);
+  const totalDiff = DB.reconciliations.reduce((a,r) => a + num(r.difference), 0);
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Stock Reconciliation</h2>
+        <p>Compare physical counts against your system records</p>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Reconciliations Done', value:DB.reconciliations.length, sub:'Total records', tone:'gold', glyph:'scale'})}
+      ${kpiCard({label:'Net Variance', value:`${totalDiff > 0 ? '+' : ''}${totalDiff}`, sub:'Units (physical − system)', tone: totalDiff < 0 ? 'red' : 'green'})}
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3>${icon('scale','sm')} New Reconciliation</h3>
+      <form id="recForm">
+        <div class="row">
+          <div class="field">
+            <label for="recProduct">Product *</label>
+            <select id="recProduct" required>
+              <option value="">— Select product —</option>
+              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="recSystem">System Quantity</label>
+            <input id="recSystem" type="number" readonly value="0" style="opacity:.7">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="recPhysical">Physical Count *</label>
+            <input id="recPhysical" type="number" min="0" step="1" required placeholder="0">
+          </div>
+          <div class="field">
+            <label for="recDate">Date</label>
+            <input id="recDate" type="date" value="${todayISO()}">
+          </div>
+        </div>
+        <div style="padding:13px 16px;background:var(--surface2);border-radius:12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+          <span style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">Variance</span>
+          <b id="recDiffVal" style="font-size:18px">0</b>
+        </div>
+        <label class="check-row">
+          <input type="checkbox" id="recApply" checked>
+          Adjust system stock to match the physical count
+        </label>
+        <button type="submit" class="btn primary">${icon('check','sm')} Save Reconciliation</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>${icon('file','sm')} Reconciliation History</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Product</th><th class="num">System</th><th class="num">Physical</th><th class="num">Variance</th><th>By</th><th></th></tr></thead>
+          <tbody>
+            ${list.length ? list.map(r => `
+              <tr>
+                <td>${fmtDate(r.date)}</td>
+                <td><b>${esc(r.productName)}</b></td>
+                <td class="num">${num(r.systemQty)}</td>
+                <td class="num">${num(r.physicalCount)}</td>
+                <td class="num"><span class="pill ${num(r.difference) === 0 ? 'green' : num(r.difference) > 0 ? 'blue' : 'red'}">
+                  ${num(r.difference) > 0 ? '+' : ''}${num(r.difference)}
+                </span></td>
+                <td style="color:var(--muted)">${esc(r.userName || '—')}</td>
+                <td><button class="btn sm danger" data-delrec="${r.id}">${icon('trash','sm')}</button></td>
+              </tr>`).join('') : `<tr><td colspan="7"><div class="empty">${icon('scale')}<div>No reconciliations recorded</div></div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindReconcile(){
+  if(!isAdmin()) return;
+  const prodSel = $('#recProduct');
+  const sysIn   = $('#recSystem');
+  const physIn  = $('#recPhysical');
+  const diffEl  = $('#recDiffVal');
+
+  function updateDiff(){
+    const diff = num(physIn.value) - num(sysIn.value);
+    diffEl.textContent = (diff > 0 ? '+' : '') + diff;
+    diffEl.style.color = diff === 0 ? 'var(--success)' : diff > 0 ? 'var(--info)' : 'var(--danger)';
+  }
+  prodSel.addEventListener('change', () => {
+    const p = DB.products.find(x => x.id === prodSel.value);
+    sysIn.value = p ? num(p.qty) : 0;
+    updateDiff();
+  });
+  physIn.addEventListener('input', updateDiff);
+
+  $('#recForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const p = DB.products.find(x => x.id === prodSel.value);
+    if(!p) return toast('Select a product', 'err');
+    const sysQty = num(p.qty);
+    const physical = num(physIn.value);
+    const diff = physical - sysQty;
+
+    DB.reconciliations.push({
+      id: uid(), ts: Date.now(),
+      productId: p.id, productName: p.name,
+      systemQty: sysQty, physicalCount: physical, difference: diff,
+      date: $('#recDate').value || todayISO(),
+      userName: session.name
+    });
+
+    if($('#recApply').checked){
+      p.qty = physical;
+      toast(`Reconciled — ${p.name} adjusted by ${diff > 0 ? '+' : ''}${diff}`, 'ok');
+    }else{
+      toast('Reconciliation saved (stock unchanged)', 'ok');
+    }
+    commit();
+  });
+
+  $$('[data-delrec]').forEach(b => b.addEventListener('click', () => {
+    if(!confirm('Delete this reconciliation record?')) return;
+    DB.reconciliations = DB.reconciliations.filter(x => x.id !== b.dataset.delrec);
+    commit();
+  }));
+}
+
+/* ============================================================
+   17. REPORTS  (admin only)
+   ============================================================ */
+let reportPreset = 'today';
+let reportFrom = todayISO();
+let reportTo = todayISO();
+let lastReport = null;
+
+function getReportRange(){
+  const t = todayISO();
+  if(reportPreset === 'today') return {from:t, to:t, label:'Today'};
+  if(reportPreset === 'week'){
+    const d = new Date(t + 'T00:00:00');
+    const day = d.getDay() || 7;
+    d.setDate(d.getDate() - day + 1);
+    return {from:d.toISOString().slice(0,10), to:t, label:'This Week'};
+  }
+  if(reportPreset === 'month') return {from:t.slice(0,7) + '-01', to:t, label:'This Month'};
+  if(reportPreset === 'year')  return {from:t.slice(0,4) + '-01-01', to:t, label:'This Year'};
+  return {from:reportFrom, to:reportTo, label:'Custom Range'};
+}
+const inRange = (d, from, to) => !!d && d >= from && d <= to;
+
+function buildReportData(){
+  const {from, to, label} = getReportRange();
+  const sales    = DB.sales.filter(s => inRange(s.date, from, to));
+  const expenses = DB.moneyOut.filter(m => inRange(m.date, from, to));
+  const incomes  = DB.moneyIn.filter(m => inRange(m.date, from, to));
+  const revenue      = sales.reduce((a,s) => a + num(s.total), 0);
+  const expenseTotal = expenses.reduce((a,m) => a + num(m.amount), 0);
+
+  const byProduct = {};
+  let costOfGoods = 0;
+  sales.forEach(s => {
+    if(!byProduct[s.productName]) byProduct[s.productName] = {qty:0, revenue:0, cost:0};
+    const p = DB.products.find(x => x.id === s.productId);
+    const lineCost = num(s.qty) * num(p ? p.buyingPrice : 0);
+    byProduct[s.productName].qty     += num(s.qty);
+    byProduct[s.productName].revenue += num(s.total);
+    byProduct[s.productName].cost    += lineCost;
+    costOfGoods += lineCost;
+  });
+
+  const byPayment = {};
+  sales.forEach(s => {
+    if(!byPayment[s.paymentMethod]) byPayment[s.paymentMethod] = {count:0, total:0};
+    byPayment[s.paymentMethod].count++;
+    byPayment[s.paymentMethod].total += num(s.total);
+  });
+
+  const byChannel = {'Cash':0, 'M-Pesa':0, 'Bank':0, 'Other':0};
+  incomes.forEach(m => {
+    const key = ['Cash','M-Pesa','Bank'].includes(m.source) ? m.source : 'Other';
+    byChannel[key] += num(m.amount);
+  });
+
+  const byCategory = {};
+  expenses.forEach(m => {
+    const c = m.category || 'Miscellaneous';
+    byCategory[c] = (byCategory[c] || 0) + num(m.amount);
+  });
+
+  const outstandingList = DB.debts.filter(d => num(d.balance) > 0);
+  const outstanding = outstandingList.reduce((a,d) => a + num(d.balance), 0);
+  const grossProfit = revenue - costOfGoods;
+  const profit      = revenue - costOfGoods - expenseTotal;
+
+  return {from, to, label, sales, expenses, incomes, revenue, expenseTotal,
+          costOfGoods, grossProfit, profit, byProduct, byPayment, byChannel,
+          byCategory, outstanding, outstandingList};
+}
+
+function viewReports(){
+  if(!isAdmin()){
+    return `<div class="card"><div class="empty">${icon('lock')}<div>Reports are restricted to administrators.</div></div></div>`;
+  }
+  const r = buildReportData();
+  lastReport = r;
+
+  const prodEntries = Object.entries(r.byProduct).sort((a,b) => b[1].revenue - a[1].revenue);
+  const maxRev = Math.max(1, ...prodEntries.map(([,v]) => v.revenue));
+  const grossProfit = r.grossProfit;
+  const totalCost   = r.costOfGoods;
+  const maxChannel  = Math.max(1, ...Object.values(r.byChannel));
+
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Reports &amp; Analytics</h2>
+        <p>${esc(r.label)}: ${fmtDate(r.from)} → ${fmtDate(r.to)}</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost" id="exportPDF">${icon('file','sm')} PDF</button>
+        <button class="btn primary" id="exportXLS">${icon('download','sm')} Excel</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="tabs" id="reportTabs">
+        ${[['today','Today'],['week','This Week'],['month','This Month'],['year','This Year'],['custom','Custom']]
+          .map(([k,l]) => `<button type="button" class="tab ${reportPreset === k ? 'active' : ''}" data-preset="${k}">${l}</button>`).join('')}
+      </div>
+      <div class="row" id="customRange" style="${reportPreset === 'custom' ? '' : 'display:none'}">
+        <div class="field"><label for="rFrom">From</label><input id="rFrom" type="date" value="${reportFrom}"></div>
+        <div class="field"><label for="rTo">To</label><input id="rTo" type="date" value="${reportTo}"></div>
+      </div>
+    </div>
+
+    <div class="grid cards" style="margin-bottom:16px">
+      ${kpiCard({label:'Total Revenue', value:money(r.revenue), sub:`${r.sales.length} sale(s)`, tone:'green', glyph:'trend'})}
+      ${kpiCard({label:'Cost of Goods Sold', value:money(r.costOfGoods), sub:'Buying cost of items sold', tone:'blue', glyph:'box2'})}
+      ${kpiCard({label:'Total Expenses', value:money(r.expenseTotal), sub:`${r.expenses.length} entr(ies)`, tone:'red', glyph:'cashOut'})}
+      ${kpiCard({label:'Net Profit', value:money(r.profit), sub:'Revenue − COGS − Expenses', tone: r.profit >= 0 ? 'gold' : 'red', glyph:'chart'})}
+      ${kpiCard({label:'Gross Profit (goods)', value:money(grossProfit), sub:'Revenue − Cost of goods', tone:'blue', glyph:'box2'})}
+      ${kpiCard({label:'Outstanding Debts', value:money(r.outstanding), sub:`${r.outstandingList.length} account(s)`, tone:'red', glyph:'users'})}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('cashIn','sm')} Money In by Channel</h3>
+        ${['Cash','M-Pesa','Bank','Other'].map(k => `
+          <div class="bar-row">
+            <div class="nm">${k}</div>
+            <div class="bar-track"><div class="bar-fill green" style="width:${(r.byChannel[k] / maxChannel * 100).toFixed(1)}%"></div></div>
+            <div class="vl">${moneyShort(r.byChannel[k])}</div>
+          </div>`).join('')}
+        <div style="display:flex;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border);margin-top:6px">
+          <b>Total Received</b>
+          <b style="color:var(--gold)">${money(Object.values(r.byChannel).reduce((a,b) => a + b, 0))}</b>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>${icon('cart','sm')} Payment Method Breakdown</h3>
+        ${Object.keys(r.byPayment).length
+          ? Object.entries(r.byPayment).map(([m,v]) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+                <div>${payPill(m)}<div style="font-size:11px;color:var(--muted);margin-top:3px">${v.count} transaction(s)</div></div>
+                <b>${money(v.total)}</b>
+              </div>`).join('')
+          : `<div class="empty">No sales in this period</div>`}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3>${icon('box','sm')} Sales by Product</h3>
+      ${prodEntries.length ? `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Product</th><th class="num">Units Sold</th><th class="num">Revenue</th><th class="num">Cost</th><th class="num">Profit</th><th>Share</th></tr></thead>
+            <tbody>
+              ${prodEntries.map(([name,v]) => `
+                <tr>
+                  <td><b>${esc(name)}</b></td>
+                  <td class="num">${v.qty}</td>
+                  <td class="num">${money(v.revenue)}</td>
+                  <td class="num" style="color:var(--muted)">${money(v.cost)}</td>
+                  <td class="num" style="color:${v.revenue - v.cost >= 0 ? 'var(--success)' : 'var(--danger)'}"><b>${money(v.revenue - v.cost)}</b></td>
+                  <td style="min-width:120px">
+                    <div class="bar-track"><div class="bar-fill" style="width:${(v.revenue / maxRev * 100).toFixed(1)}%"></div></div>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td>TOTAL</td>
+                <td class="num">${prodEntries.reduce((a,[,v]) => a + v.qty, 0)}</td>
+                <td class="num">${money(r.revenue)}</td>
+                <td class="num">${money(totalCost)}</td>
+                <td class="num"><span style="color:var(--gold)">${money(grossProfit)}</span></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>` : `<div class="empty">${icon('box')}<div>No sales in this period</div></div>`}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('cashOut','sm')} Expenses by Category</h3>
+        ${Object.keys(r.byCategory).length
+          ? Object.entries(r.byCategory).sort((a,b) => b[1] - a[1]).map(([c,v]) => `
+              <div class="bar-row">
+                <div class="nm">${esc(c)}</div>
+                <div class="bar-track"><div class="bar-fill red" style="width:${(v / Math.max(...Object.values(r.byCategory)) * 100).toFixed(1)}%"></div></div>
+                <div class="vl">${moneyShort(v)}</div>
+              </div>`).join('')
+          : `<div class="empty">No expenses in this period</div>`}
+      </div>
+
+      <div class="card">
+        <h3>${icon('users','sm')} Outstanding Debts</h3>
+        ${r.outstandingList.length ? `
+          <div class="table-wrap" style="border:none">
+            <table style="min-width:auto">
+              <thead><tr><th>Customer</th><th>Phone</th><th class="num">Balance</th></tr></thead>
+              <tbody>
+                ${[...r.outstandingList].sort((a,b) => num(b.balance) - num(a.balance)).map(d => `
+                  <tr>
+                    <td>${esc(d.customerName)}</td>
+                    <td style="color:var(--muted)">${esc(d.phone)}</td>
+                    <td class="num" style="color:var(--danger)"><b>${money(d.balance)}</b></td>
+                  </tr>`).join('')}
+              </tbody>
+              <tfoot><tr><td colspan="2">TOTAL</td><td class="num">${money(r.outstanding)}</td></tr></tfoot>
+            </table>
+          </div>` : `<div class="empty">${icon('check')}<div>No outstanding debts 🎉</div></div>`}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('file','sm')} Profit &amp; Loss Summary</h3>
+      <div class="table-wrap" style="border:none">
+        <table style="min-width:auto">
+          <tbody>
+            <tr><td>Total Revenue (sales)</td><td class="num"><b style="color:var(--success)">${money(r.revenue)}</b></td></tr>
+            <tr><td>Cost of Goods Sold</td><td class="num" style="color:var(--muted)">− ${money(totalCost)}</td></tr>
+            <tr><td>Gross Profit</td><td class="num"><b>${money(grossProfit)}</b></td></tr>
+            <tr><td>Operating Expenses</td><td class="num" style="color:var(--danger)">− ${money(r.expenseTotal)}</td></tr>
+            <tr>
+              <td><b>Net Profit</b><br><small style="color:var(--muted);font-weight:400">Revenue − Cost of Goods Sold − Expenses</small></td>
+              <td class="num"><b style="font-size:16px;color:${r.profit >= 0 ? 'var(--gold)' : 'var(--danger)'}">${money(r.profit)}</b></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function bindReports(){
+  if(!isAdmin()) return;
+  $$('#reportTabs .tab').forEach(t => t.addEventListener('click', () => {
+    reportPreset = t.dataset.preset;
+    render();
+  }));
+  const from = $('#rFrom'), to = $('#rTo');
+  if(from) from.addEventListener('change', e => { reportFrom = e.target.value; render(); });
+  if(to)   to.addEventListener('change', e => { reportTo = e.target.value; render(); });
+  $('#exportPDF').addEventListener('click', exportReportPDF);
+  $('#exportXLS').addEventListener('click', exportReportXLS);
+}
+
+function reportHTML(){
+  const r = lastReport;
+  if(!r) return '';
+  const prodEntries = Object.entries(r.byProduct).sort((a,b) => b[1].revenue - a[1].revenue);
+  const grossProfit = r.grossProfit;
+  const totalCost   = r.costOfGoods;
+  const s = DB.settings;
+
+  return `
+    <h1>${esc(s.businessName)}</h1>
+    <div class="muted">${esc(s.address || '')} · ${esc(s.phone || '')} · ${esc(s.email || '')}</div>
+    <div class="muted">Report: <b>${esc(r.label)}</b> — ${fmtDate(r.from)} to ${fmtDate(r.to)} · Generated ${new Date().toLocaleString('en-GB')}</div>
+
+    <div class="grid">
+      <div class="kpi"><span>Total Revenue</span><b>${money(r.revenue)}</b></div>
+      <div class="kpi"><span>Cost of Goods Sold</span><b>${money(totalCost)}</b></div>
+      <div class="kpi"><span>Total Expenses</span><b>${money(r.expenseTotal)}</b></div>
+      <div class="kpi"><span>Net Profit</span><b>${money(r.profit)}</b></div>
+      <div class="kpi"><span>Gross Profit</span><b>${money(grossProfit)}</b></div>
+      <div class="kpi"><span>Outstanding Debts</span><b>${money(r.outstanding)}</b></div>
+    </div>
+
+    <h2>Money In by Channel</h2>
+    <table><thead><tr><th>Channel</th><th>Amount</th></tr></thead><tbody>
+      ${['Cash','M-Pesa','Bank','Other'].map(k => `<tr><td>${k}</td><td>${money(r.byChannel[k])}</td></tr>`).join('')}
+      <tr><td><b>Total</b></td><td><b>${money(Object.values(r.byChannel).reduce((a,b) => a + b, 0))}</b></td></tr>
+    </tbody></table>
+
+    <h2>Payment Method Breakdown</h2>
+    <table><thead><tr><th>Method</th><th>Transactions</th><th>Total</th></tr></thead><tbody>
+      ${Object.entries(r.byPayment).map(([m,v]) => `<tr><td>${esc(m)}</td><td>${v.count}</td><td>${money(v.total)}</td></tr>`).join('') || '<tr><td colspan="3">No sales</td></tr>'}
+    </tbody></table>
+
+    <h2>Sales by Product</h2>
+    <table><thead><tr><th>Product</th><th>Units</th><th>Revenue</th><th>Cost</th><th>Profit</th></tr></thead><tbody>
+      ${prodEntries.map(([n,v]) => `<tr><td>${esc(n)}</td><td>${v.qty}</td><td>${money(v.revenue)}</td><td>${money(v.cost)}</td><td>${money(v.revenue - v.cost)}</td></tr>`).join('') || '<tr><td colspan="5">No sales</td></tr>'}
+      <tr>
+        <td><b>TOTAL</b></td>
+        <td><b>${prodEntries.reduce((a,[,v]) => a + v.qty, 0)}</b></td>
+        <td><b>${money(r.revenue)}</b></td>
+        <td><b>${money(totalCost)}</b></td>
+        <td><b>${money(grossProfit)}</b></td>
+      </tr>
+    </tbody></table>
+
+    <h2>Expenses by Category</h2>
+    <table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>
+      ${Object.entries(r.byCategory).sort((a,b) => b[1] - a[1]).map(([c,v]) => `<tr><td>${esc(c)}</td><td>${money(v)}</td></tr>`).join('') || '<tr><td colspan="2">No expenses</td></tr>'}
+      <tr><td><b>Total</b></td><td><b>${money(r.expenseTotal)}</b></td></tr>
+    </tbody></table>
+
+    <h2>Outstanding Debts</h2>
+    <table><thead><tr><th>Customer</th><th>Phone</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Due</th></tr></thead><tbody>
+      ${r.outstandingList.map(d => `<tr><td>${esc(d.customerName)}</td><td>${esc(d.phone)}</td><td>${money(d.amountOwed)}</td><td>${money(d.amountPaid)}</td><td>${money(d.balance)}</td><td>${fmtDate(d.dueDate)}</td></tr>`).join('') || '<tr><td colspan="6">No outstanding debts</td></tr>'}
+      <tr><td colspan="4"><b>TOTAL</b></td><td><b>${money(r.outstanding)}</b></td><td></td></tr>
+    </tbody></table>
+
+    <h2>Profit &amp; Loss</h2>
+    <table><tbody>
+      <tr><td>Total Revenue</td><td>${money(r.revenue)}</td></tr>
+      <tr><td>Cost of Goods Sold</td><td>${money(totalCost)}</td></tr>
+      <tr><td><b>Gross Profit</b></td><td><b>${money(grossProfit)}</b></td></tr>
+      <tr><td>Operating Expenses</td><td>${money(r.expenseTotal)}</td></tr>
+      <tr><td><b>Net Profit (Revenue − COGS − Expenses)</b></td><td><b>${money(r.profit)}</b></td></tr>
+    </tbody></table>
+  `;
+}
+
+function exportReportPDF(){
+  if(!isAdmin()) return toast('Access restricted to administrators', 'err');
+  if(!lastReport) return;
+  const w = window.open('', '_blank');
+  if(!w) return toast('Allow pop-ups to export PDF', 'err');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
+  <title>Report — ${esc(DB.settings.businessName)}</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Arial,sans-serif;padding:28px;color:#1b1b1b;font-size:13px}
+    h1{font-size:22px;margin:0 0 4px;color:#8a6420}
+    h2{font-size:14px;margin:24px 0 8px;border-bottom:2px solid #d9a441;padding-bottom:5px;color:#333}
+    .muted{color:#777;font-size:11.5px;line-height:1.6}
+    table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:8px}
+    th,td{border:1px solid #ddd;padding:6px 9px;text-align:left}
+    th{background:#f6f1e4;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px}
+    td:last-child,th:last-child{text-align:right}
+    .grid{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}
+    .kpi{border:1px solid #e2dbcb;border-radius:8px;padding:10px 14px;min-width:150px;background:#fdfbf7}
+    .kpi span{display:block;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.5px}
+    .kpi b{font-size:15px;color:#8a6420}
+  </style></head><body>${reportHTML()}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 450);
+}
+
+function exportReportXLS(){
+  if(!isAdmin()) return toast('Access restricted to administrators', 'err');
+  const r = lastReport;
+  if(!r) return;
+  const prodEntries = Object.entries(r.byProduct).sort((a,b) => b[1].revenue - a[1].revenue);
+  const grossProfit = r.grossProfit;
+  const totalCost   = r.costOfGoods;
+
+  let html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>';
+  html += `<h2>${esc(DB.settings.businessName)} — ${esc(r.label)} (${fmtDate(r.from)} to ${fmtDate(r.to)})</h2>`;
+  html += '<h3>Summary</h3><table border="1"><tr><th>Metric</th><th>Amount</th></tr>';
+  html += `<tr><td>Total Revenue</td><td>${r.revenue}</td></tr>`;
+  html += `<tr><td>Cost of Goods Sold</td><td>${totalCost}</td></tr>`;
+  html += `<tr><td>Gross Profit</td><td>${grossProfit}</td></tr>`;
+  html += `<tr><td>Total Expenses</td><td>${r.expenseTotal}</td></tr>`;
+  html += `<tr><td>Net Profit (Revenue - COGS - Expenses)</td><td>${r.profit}</td></tr>`;
+  html += `<tr><td>Outstanding Debts</td><td>${r.outstanding}</td></tr></table>`;
+
+  html += '<h3>Money In by Channel</h3><table border="1"><tr><th>Channel</th><th>Amount</th></tr>';
+  ['Cash','M-Pesa','Bank','Other'].forEach(k => { html += `<tr><td>${k}</td><td>${r.byChannel[k]}</td></tr>`; });
+  html += '</table>';
+
+  html += '<h3>Payment Method Breakdown</h3><table border="1"><tr><th>Method</th><th>Count</th><th>Total</th></tr>';
+  Object.entries(r.byPayment).forEach(([m,v]) => { html += `<tr><td>${esc(m)}</td><td>${v.count}</td><td>${v.total}</td></tr>`; });
+  html += '</table>';
+
+  html += '<h3>Sales by Product</h3><table border="1"><tr><th>Product</th><th>Units</th><th>Revenue</th><th>Cost</th><th>Profit</th></tr>';
+  prodEntries.forEach(([n,v]) => { html += `<tr><td>${esc(n)}</td><td>${v.qty}</td><td>${v.revenue}</td><td>${v.cost}</td><td>${v.revenue - v.cost}</td></tr>`; });
+  html += `<tr><td><b>TOTAL</b></td><td></td><td>${r.revenue}</td><td>${totalCost}</td><td>${grossProfit}</td></tr></table>`;
+
+  html += '<h3>Expenses by Category</h3><table border="1"><tr><th>Category</th><th>Amount</th></tr>';
+  Object.entries(r.byCategory).forEach(([c,v]) => { html += `<tr><td>${esc(c)}</td><td>${v}</td></tr>`; });
+  html += '</table>';
+
+  html += '<h3>Outstanding Debts</h3><table border="1"><tr><th>Customer</th><th>Phone</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Due Date</th></tr>';
+  r.outstandingList.forEach(d => {
+    html += `<tr><td>${esc(d.customerName)}</td><td>${esc(d.phone)}</td><td>${d.amountOwed}</td><td>${d.amountPaid}</td><td>${d.balance}</td><td>${d.dueDate || ''}</td></tr>`;
+  });
+  html += '</table></body></html>';
+
+  download(new Blob([html], {type:'application/vnd.ms-excel'}), `report_${r.from}_to_${r.to}.xls`);
+  toast('Excel report downloaded', 'ok');
+}
+
+/* ============================================================
+   18. SETTINGS  (admin only)
+   ============================================================ */
+function billingCardHTML(){
+  const st = SUB_STATE || {status:'unknown', daysLeft:0, paid:false};
+  const toneMap = {active:'green', trial:'amber', grace:'red', expired:'red', unknown:'grey'};
+  const labelMap = {active:'Active', trial:'Free trial', grace:'Grace period', expired:'Expired', unknown:'Unverified'};
+  const tone = toneMap[st.status] || 'grey';
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <h3>${icon('cash','sm')} Subscription &amp; Billing</h3>
+
+      <div class="grid cards" style="margin-bottom:16px">
+        ${kpiCard({
+          label:'Status',
+          value:`<span class="pill ${tone}">${labelMap[st.status] || st.status}</span>`,
+          sub: st.expiresOn ? 'Expires ' + fmtDate(st.expiresOn) : '—',
+          tone: tone === 'red' ? 'red' : tone === 'amber' ? 'amber' : 'green'
+        })}
+        ${kpiCard({
+          label:'Days Remaining',
+          value: st.status === 'expired' ? '0' : (st.daysLeft ?? '—'),
+          sub: st.paid ? 'Paid subscription' : 'Trial period',
+          tone:'gold'
+        })}
+        ${kpiCard({label:'Plan', value: money(BILLING.pricePerMonth), sub:'per month', tone:'blue'})}
+      </div>
+
+      <div style="font-size:12.5px;color:var(--muted);line-height:2;background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div>M-Pesa Paybill: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
+        <div>Account number: <b style="color:var(--text)">${esc(BILLING.accountNo)}</b></div>
+        <div>Amount: <b style="color:var(--text)">${money(BILLING.pricePerMonth)}</b></div>
+        <div>Support: <b style="color:var(--text)">${esc(BILLING.supportPhone)}</b></div>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn primary" id="billPay">${icon('cash','sm')} Pay / Renew</button>
+        <button type="button" class="btn ghost" id="billClaim">Submit payment code</button>
+        <button type="button" class="btn ghost" id="billRefresh">${icon('refresh','sm')} Refresh status</button>
+      </div>
+
+      <p style="color:var(--muted);font-size:11.5px;margin:12px 0 0;line-height:1.7">
+        Subscription status lives in Cloud Firestore (one per organization) and can only be
+        extended by the system owner. If you have paid and access is still blocked, tap
+        <b>Refresh status</b> or contact support.
+      </p>
+    </div>`;
+}
+
+function viewSettings(){
+  if(!isAdmin()){
+    return `<div class="card"><div class="empty">${icon('lock')}<div>Settings are restricted to administrators.</div></div></div>`;
+  }
+  const s = DB.settings;
+  return `
+    <div class="page-head">
+      <div>
+        <h2>Settings</h2>
+        <p>Business configuration, users, backup and preferences</p>
+      </div>
+    </div>
+
+    <div class="sub-banner" style="background:rgba(217,164,65,.10);border-color:rgba(217,164,65,.35);color:var(--gold)">
+      ${icon('users','sm')}
+      <span>You are managing <b>${esc(DB.settings.businessName)}</b> —
+        organization <code style="font-size:11px;opacity:.8">${esc(currentOrgId || '—')}</code>.
+        Any user created below belongs to this organization only.</span>
+    </div>
+
+    ${billingCardHTML()}
+
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>${icon('sliders','sm')} Business Profile</h3>
+        <form id="bizForm">
+          <div class="field">
+            <label for="setName">Business Name</label>
+            <input id="setName" value="${esc(s.businessName)}">
+          </div>
+          <div class="field">
+            <label for="setTag">Tagline</label>
+            <input id="setTag" value="${esc(s.tagline || '')}" placeholder="Premium Wines &amp; Spirits">
+          </div>
+          <div class="row">
+            <div class="field"><label for="setPhone">Phone</label><input id="setPhone" value="${esc(s.phone || '')}"></div>
+            <div class="field"><label for="setEmail">Email</label><input id="setEmail" value="${esc(s.email || '')}"></div>
+          </div>
+          <div class="field">
+            <label for="setAddress">Address</label>
+            <input id="setAddress" value="${esc(s.address || '')}">
+          </div>
+          <div class="row">
+            <div class="field"><label for="setCurrency">Currency</label><input id="setCurrency" value="${esc(s.currency)}" placeholder="KES"></div>
+            <div class="field"><label for="setLow">Default Low-Stock Alert</label><input id="setLow" type="number" min="0" value="${num(s.defaultLowStock)}"></div>
+          </div>
+          <button type="submit" class="btn primary">${icon('check','sm')} Save Business Profile</button>
+          <p style="color:var(--muted);font-size:11.5px;margin:10px 0 0">
+            Saved to Cloud Firestore — the name stays put on every device and after every refresh.
+          </p>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>${icon('upload','sm')} Logo &amp; Appearance</h3>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <div id="logoPreview" style="width:76px;height:76px;border-radius:18px;display:grid;place-items:center;font-size:24px;font-weight:800;
+                      background:linear-gradient(140deg,var(--gold-2),var(--gold));color:#231803;overflow:hidden">
+            ${logoHTML()}
+          </div>
+          <div>
+            <input type="file" id="logoFile" accept="image/*" style="display:none">
+            <div class="btn-row">
+              <button type="button" class="btn ghost sm" id="logoBtn">${icon('upload','sm')} Upload Logo</button>
+              <button type="button" class="btn ghost sm" id="logoClear">Remove</button>
+            </div>
+            <p style="color:var(--muted);font-size:11.5px;margin:9px 0 0;max-width:230px">
+              Square PNG/JPG works best. Used on the landing page, sidebar and reports.
+            </p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Theme</label>
+          <div class="tabs" style="margin-bottom:0">
+            <button type="button" class="tab ${s.theme === 'dark' ? 'active' : ''}" data-theme-set="dark">🌙 Dark</button>
+            <button type="button" class="tab ${s.theme === 'light' ? 'active' : ''}" data-theme-set="light">☀️ Light</button>
+          </div>
+        </div>
+
+        <h3 style="margin-top:20px">${icon('file','sm')} Report Preferences</h3>
+        <label class="check-row" style="margin-bottom:0">
+          <input type="checkbox" id="setReportLogo" ${s.showLogoOnReports ? 'checked' : ''}>
+          Show business logo on exported reports
+        </label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3>${icon('users','sm')} User Accounts &amp; Roles</h3>
+      <p style="color:var(--muted);font-size:12.5px;margin:-4px 0 14px">
+        Accounts created here are placed inside <b style="color:var(--gold)">your organization only</b>.
+        They can sign in with either their <b>email</b> or their <b>username</b>.<br><br>
+        <b style="color:var(--gold)">Admin</b> — full access to Products, Money In, Reconciliation,
+        Reports, Settings, and can add/remove users.<br>
+        <b style="color:var(--gold)">Worker</b> — records sales, manages customers/debts and Money Out.
+        Cannot view Products, Money In, Reconciliation, Reports or Settings, and cannot delete sales.
+      </p>
+
+      <form id="newUserForm" style="background:var(--surface2);border:1px dashed var(--border);border-radius:12px;padding:16px;margin-bottom:16px">
+        <h4 style="font-size:13px;margin-bottom:12px;display:flex;align-items:center;gap:8px">${icon('plus','sm')} Add a new user to <b style="color:var(--gold)">${esc(DB.settings.businessName)}</b></h4>
+        <div class="row">
+          <div class="field">
+            <label for="nuName">Full Name *</label>
+            <input id="nuName" required placeholder="Jane Doe">
+          </div>
+          <div class="field">
+            <label for="nuUser">Username *</label>
+            <input id="nuUser" required placeholder="jane" autocapitalize="none" autocorrect="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="nuEmail">Email Address *</label>
+            <input id="nuEmail" type="email" required placeholder="jane@example.com" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="nuPhone">Phone Number</label>
+            <input id="nuPhone" type="tel" placeholder="+254 7XX XXX XXX" autocomplete="tel">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="nuPass">Temporary Password *</label>
+            <input id="nuPass" type="text" required placeholder="at least 6 characters" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="nuRole">Role</label>
+            <select id="nuRole">
+              <option value="staff">Worker</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
+        <button type="submit" class="btn primary">${icon('plus','sm')} Create User</button>
+        <p style="color:var(--muted);font-size:11.5px;margin:10px 0 0">
+          The password is shown in plain text so you can hand it to the user.
+          They can change it any time using the Forgot Password link on the login screen.
+        </p>
+      </form>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Full Name</th><th>Username</th><th>Phone</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${DB.users.length ? DB.users.map(u => `
+              <tr>
+                <td>
+                  <input value="${esc(u.name)}" data-uname="${u.id}"
+                         style="padding:7px 10px;font-size:13px;max-width:150px">
+                </td>
+                <td>
+                  <input value="${esc(u.username)}" data-uuser="${u.id}"
+                         style="padding:7px 10px;font-size:13px;max-width:120px"
+                         autocapitalize="none" autocorrect="off" spellcheck="false">
+                  ${u.id === session.id ? '<div style="font-size:10.5px;color:var(--gold);margin-top:4px">that’s you</div>' : ''}
+                </td>
+                <td>
+                  <input value="${esc(u.phone || '')}" data-uphone="${u.id}"
+                         style="padding:7px 10px;font-size:13px;max-width:140px" placeholder="—">
+                </td>
+                <td style="font-size:12px;color:var(--muted)">${esc(u.email || '—')}</td>
+                <td>
+                  <select data-urole="${u.id}" style="padding:7px 10px;font-size:13px;max-width:100px">
+                    <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+                    <option value="staff" ${u.role === 'staff' ? 'selected' : ''}>Worker</option>
+                  </select>
+                </td>
+                <td>
+                  <span class="pill ${u.active === false ? 'red' : 'green'}">${u.active === false ? 'Disabled' : 'Active'}</span>
+                </td>
+                <td>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <button type="button" class="btn sm ghost" data-upass="${u.id}">${icon('lock','sm')} Reset</button>
+                    <button type="button" class="btn sm ghost" data-utoggle="${u.id}">${u.active === false ? 'Enable' : 'Disable'}</button>
+                    ${u.id !== session.id ? `<button type="button" class="btn sm danger" data-udel="${u.id}">${icon('trash','sm')}</button>` : ''}
+                  </div>
+                </td>
+              </tr>`).join('') : `<tr><td colspan="7"><div class="empty">No user accounts found. If you expect to see users here, check the Firestore <code>users</code> collection.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="background:var(--surface2);border-style:dashed;box-shadow:none;margin-top:16px">
+        <h4 style="font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px">${icon('alert','sm')} Good practice</h4>
+        <ul style="margin:0;padding-left:20px;color:var(--muted);font-size:12.5px;line-height:1.8">
+          <li>Give each worker their own login — never share an account.</li>
+          <li>Disable (rather than delete) an account when someone leaves, so their sales history stays intact.</li>
+          <li>Keep at least one active administrator at all times.</li>
+          <li>Use the “Reset” button to send a password reset email to a user who has forgotten their password.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>${icon('download','sm')} Backup &amp; Restore</h3>
+      <p style="color:var(--muted);font-size:12.5px;margin:-4px 0 14px">
+        POS data is stored locally in this browser. User accounts and the business profile are stored in
+        Cloud Firestore. Export a backup regularly to avoid data loss.
+      </p>
+      <div class="btn-row">
+        <button type="button" class="btn primary" id="backupBtn">${icon('download','sm')} Download Backup (JSON)</button>
+        <button type="button" class="btn ghost" id="restoreBtn">${icon('upload','sm')} Restore from File</button>
+        <input type="file" id="restoreFile" accept=".json,application/json" style="display:none">
+        <button type="button" class="btn danger" id="resetBtn">${icon('trash','sm')} Factory Reset</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindSettings(){
+  if(!isAdmin()) return;
+
+  /* ---------- billing ---------- */
+  const bp = $('#billPay');
+  if(bp) bp.addEventListener('click', () => initiateMpesaPayment(bp));
+
+  const bc = $('#billClaim');
+  if(bc) bc.addEventListener('click', async () => {
+    const code = prompt('Enter your M-Pesa / payment confirmation code:');
+    if(!code || !code.trim()) return;
+    bc.disabled = true;
+    try{
+      await setDoc(doc(collection(db, 'paymentRequests')), {
+        code: code.trim(), orgId: currentOrgId,
+        uid: session.id, name: session.name, email: session.email || '',
+        amount: BILLING.pricePerMonth, currency: BILLING.currency,
+        status:'pending', createdAt: Date.now()
+      });
+      toast('Payment submitted — you will be reactivated shortly', 'ok');
+    }catch(err){
+      toast(err.message || 'Could not submit payment', 'err');
+    }finally{ bc.disabled = false; }
+  });
+
+  const br = $('#billRefresh');
+  if(br) br.addEventListener('click', async () => {
+    br.disabled = true;
+    await loadSubscription();
+    br.disabled = false;
+    render();
+    toast(subBlocked() ? 'Subscription still inactive' : 'Subscription active', subBlocked() ? 'err' : 'ok');
+  });
+
+  /* ---------- business profile ---------- */
+  $('#bizForm').addEventListener('submit', e => {
+    e.preventDefault();
+    DB.settings.businessName    = $('#setName').value.trim() || 'MOBIBIZ';
+    DB.settings.tagline         = $('#setTag').value.trim();
+    DB.settings.phone           = $('#setPhone').value.trim();
+    DB.settings.email           = $('#setEmail').value.trim();
+    DB.settings.address         = $('#setAddress').value.trim();
+    DB.settings.currency        = $('#setCurrency').value.trim() || 'KES';
+    DB.settings.defaultLowStock = num($('#setLow').value);
+    commitSettings();
+    toast('Business profile saved', 'ok');
+  });
+
+  /* ---------- logo ---------- */
+  $('#logoBtn').addEventListener('click', () => $('#logoFile').click());
+  $('#logoFile').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if(!file) return;
+    if(file.size > 900 * 1024) return toast('Image too large — use one under 900KB', 'err');
+    const reader = new FileReader();
+    reader.onload = ev => {
+      DB.settings.logo = ev.target.result;
+      commitSettings();
+      toast('Logo updated', 'ok');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  });
+  $('#logoClear').addEventListener('click', () => {
+    DB.settings.logo = '';
+    commitSettings();
+    toast('Logo removed', 'ok');
+  });
+
+  /* ---------- theme ---------- */
+  $$('[data-theme-set]').forEach(b => b.addEventListener('click', () => {
+    DB.settings.theme = b.dataset.themeSet;
+    commitSettings();
+  }));
+
+  $('#setReportLogo').addEventListener('change', e => {
+    DB.settings.showLogoOnReports = e.target.checked;
+    persist();
+    pushSettings();
+  });
+
+  /* ---------- create a user ---------- */
+  $('#newUserForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name     = $('#nuName').value.trim();
+    const username = $('#nuUser').value.trim();
+    const email    = $('#nuEmail').value.trim();
+    const phone    = $('#nuPhone').value.trim();
+    const password = $('#nuPass').value;
+    const role     = $('#nuRole').value;
+
+    if(!name || !username || !email || !password) return toast('All required fields must be filled', 'err');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('Enter a valid email address', 'err');
+    if(password.length < 6) return toast('Password must be at least 6 characters', 'err');
+    if(!/^[a-z0-9._-]+$/i.test(username)) return toast('Username: letters, numbers, dot, dash or underscore only', 'err');
+
+    const btn = e.target.querySelector('button[type="submit"]');
+    if(btn) btn.disabled = true;
+
+    try{
+      await createUserAccount({ name, username, email, phone, password, role });
+      await syncUsersFromFirestore();
+      toast(`User “${username}” created in ${DB.settings.businessName}`, 'ok');
+      render();
+    }catch(err){
+      console.error(err);
+      toast(err.message || 'Could not create the user', 'err');
+    }finally{
+      if(btn) btn.disabled = false;
+    }
+  });
+
+  $$('[data-uname]').forEach(inp => inp.addEventListener('change', async e => {
+    const u = DB.users.find(x => x.id === inp.dataset.uname);
+    if(!u) return;
+    const next = e.target.value.trim();
+    if(!next){ e.target.value = u.name; return toast('Name cannot be empty', 'err'); }
+    if(next === u.name) return;
+    try{
+      await patchUser(u.id, { name: next });
+      u.name = next;
+      if(u.id === session.id){
+        session.name = next;
+        $('#userName').textContent = next;
+        $('#userAv').textContent = initials(next);
+      }
+      persist();
+      toast('Name updated', 'ok');
+    }catch(err){
+      e.target.value = u.name;
+      toast(err.message || 'Update failed', 'err');
+    }
+  }));
+
+  $$('[data-uphone]').forEach(inp => inp.addEventListener('change', async e => {
+    const u = DB.users.find(x => x.id === inp.dataset.uphone);
+    if(!u) return;
+    const next = e.target.value.trim();
+    if(next === (u.phone || '')) return;
+    try{
+      await patchUser(u.id, { phone: next });
+      u.phone = next;
+      if(u.id === session.id) session.phone = next;
+      persist();
+      toast('Phone updated', 'ok');
+    }catch(err){
+      e.target.value = u.phone || '';
+      toast(err.message || 'Update failed', 'err');
+    }
+  }));
+
+  $$('[data-uuser]').forEach(inp => inp.addEventListener('change', async e => {
+    const u = DB.users.find(x => x.id === inp.dataset.uuser);
+    if(!u) return;
+    const next = e.target.value.trim();
+    if(!next){ e.target.value = u.username; return toast('Username cannot be empty', 'err'); }
+    if(next === u.username) return;
+    if(!/^[a-z0-9._-]+$/i.test(next)){ e.target.value = u.username; return toast('Invalid username', 'err'); }
+    try{
+      const taken = await getDoc(doc(db, 'usernames', unameKey(next)));
+      if(taken.exists() && taken.data().uid !== u.id) throw new Error('That username is already taken');
+
+      await releaseUsername(u.username);
+      await reserveUsername(next, u.id, u.email, currentOrgId);
+      await patchUser(u.id, { username: next });
+
+      u.username = next;
+      if(u.id === session.id) session.username = next;
+      persist();
+      toast('Username updated', 'ok');
+      render();
+    }catch(err){
+      e.target.value = u.username;
+      toast(err.message || 'Update failed', 'err');
+    }
+  }));
+
+  $$('[data-urole]').forEach(sel => sel.addEventListener('change', async e => {
+    const u = DB.users.find(x => x.id === sel.dataset.urole);
+    if(!u) return;
+    const newRole = e.target.value;
+    if(u.id === session.id && newRole !== 'admin'){
+      const admins = DB.users.filter(x => x.role === 'admin' && x.active !== false);
+      if(admins.length <= 1){ e.target.value = 'admin'; return toast('You are the last administrator', 'err'); }
+    }
+    try{
+      await patchUser(u.id, { role: newRole });
+      u.role = newRole;
+      if(u.id === session.id) session.role = newRole;
+      persist();
+      toast('Role updated', 'ok');
+      render();
+    }catch(err){
+      e.target.value = u.role;
+      toast(err.message || 'Update failed', 'err');
+    }
+  }));
+
+  $$('[data-upass]').forEach(b => b.addEventListener('click', async () => {
+    const u = DB.users.find(x => x.id === b.dataset.upass);
+    if(!u || !u.email) return toast('This user has no email address', 'err');
+    if(!confirm(`Send a password reset email to ${u.email}?`)) return;
+    try{
+      await sendResetLink(u.email);
+      toast(`Reset email sent to ${u.email}`, 'ok');
+    }catch(err){
+      toast(err.message || 'Could not send the reset email', 'err');
+    }
+  }));
+
+  $$('[data-utoggle]').forEach(b => b.addEventListener('click', async () => {
+    const u = DB.users.find(x => x.id === b.dataset.utoggle);
+    if(!u) return;
+    const willDisable = u.active !== false;
+    if(willDisable && u.id === session.id) return toast('You cannot disable your own account', 'err');
+    try{
+      await patchUser(u.id, { active: !willDisable });
+      u.active = !willDisable;
+      persist();
+      render();
+      toast(`Account ${u.active ? 'enabled' : 'disabled'}`, 'ok');
+    }catch(err){
+      toast(err.message || 'Update failed', 'err');
+    }
+  }));
+
+  $$('[data-udel]').forEach(b => b.addEventListener('click', () => {
+    const u = DB.users.find(x => x.id === b.dataset.udel);
+    if(!u) return;
+    if(u.id === session.id) return toast('You cannot delete your own account', 'err');
+    if(!confirm(
+      `Remove “${u.username}” from ${DB.settings.businessName}?\n\n` +
+      `This deletes their profile and frees the username.\n` +
+      `Their sales history is kept.`
+    )) return;
+
+    removeUserRecord(u)
+      .then(() => {
+        DB.users = DB.users.filter(x => x.id !== u.id);
+        persist();
+        render();
+        toast('User removed', 'ok');
+      })
+      .catch(err => toast(err.message || 'Delete failed', 'err'));
+  }));
+
+  /* ---------- backup / restore / reset ---------- */
+  $('#backupBtn').addEventListener('click', () => {
+    const payload = JSON.stringify({...DB, orgId: currentOrgId, _exported:new Date().toISOString(), _version:3}, null, 2);
+    download(new Blob([payload], {type:'application/json'}), `liquorpos-${currentOrgId || 'backup'}-${todayISO()}.json`);
+    toast('Backup downloaded', 'ok');
+  });
+
+  $('#restoreBtn').addEventListener('click', () => $('#restoreFile').click());
+  $('#restoreFile').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try{
+        const data = JSON.parse(ev.target.result);
+        if(!data.products) throw new Error('Invalid backup');
+        if(!confirm('Restoring will replace ALL current local data for this organization. Continue?')) return;
+        DB = normalize(data);
+        persist();
+        applyTheme(DB.settings.theme || 'dark');
+        pushSettings();
+        toast('Backup restored successfully', 'ok');
+        render();
+      }catch(err){
+        toast('Invalid backup file', 'err');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  $('#resetBtn').addEventListener('click', async () => {
+    if(!confirm('This will permanently delete ALL local POS data for this organization. Users and the business profile stay in Firebase. Continue?')) return;
+    if(!confirm('Are you absolutely sure? This cannot be undone.')) return;
+    localStorage.removeItem(storeKey());
+    DB = seedDB();
+    persist();
+    await pushSettings();
+    applyTheme(DB.settings.theme);
+    resetViewState();
+    toast('Organization reset to defaults', 'ok');
+    render();
+  });
+}
+
+/* ============================================================
+   19. VIEW STATE RESET
+   ============================================================ */
+function resetViewState(){
+  productEditId = null;
+  productSearch = '';
+  salesSearch = '';
+  salesFilterMethod = '';
+  salesFilterDate = '';
+  debtSearch = '';
+  debtFilter = 'unpaid';
+  reportPreset = 'today';
+  reportFrom = reportTo = todayISO();
+  lastReport = null;
+  currentSection = 'landing';
+}
+
+/* ============================================================
+   20. APP START / STOP
+   ============================================================ */
+function startApp(){
+  $('#loginScreen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#userName').textContent = session.name;
+  $('#userRole').textContent = session.role === 'admin' ? 'Administrator' : 'Worker';
+  $('#userAv').textContent   = initials(session.name);
+  currentSection = 'landing';
+  paintBranding();
+  render();
+}
+
+function stopApp(){
+  $('#loginScreen').classList.remove('hidden');
+  $('#app').classList.add('hidden');
+  resetViewState();
+}
+
+/* ============================================================
+   21. LOGIN UI WIRING
+   ============================================================ */
+function wireLoginUI(){
+  $$('#authTabs button').forEach(btn => btn.addEventListener('click', () => {
+    const mode = btn.dataset.authMode;
+    $$('#authTabs button').forEach(b => b.classList.toggle('active', b === btn));
+    $('#signinForm').classList.toggle('hidden', mode !== 'signin');
+    $('#signupForm').classList.toggle('hidden', mode !== 'signup');
+    setLoginStatus('');
+  }));
+
+  $('#togglePass').addEventListener('click', () => {
+    const p = $('#siPass');
+    p.type = p.type === 'password' ? 'text' : 'password';
+    p.focus();
+  });
+
+  $('#signinForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const value    = $('#siUser').value.trim();
+    const password = $('#siPass').value;
+    const remember = $('#siRemember').checked;
+
+    if(!value || !password){
+      return setLoginStatus('Enter your credentials to continue', 'err');
+    }
+    const btn = $('#signinBtn');
+    btn.disabled = true;
+    setLoginStatus('Signing in…', 'loading');
+    try{
+      if(value.includes('@')) await authenticateWithEmail(value, password, remember);
+      else                    await authenticateWithUsername(value, password, remember);
+      setLoginStatus('');
+    }catch(err){
+      setLoginStatus(err.message || 'Sign in failed', 'err');
+    }finally{
+      btn.disabled = false;
+    }
+  });
+
+  $('#signupForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name     = $('#suName').value.trim();
+    const username = $('#suUser').value.trim();
+    const phone    = $('#suPhone').value.trim();
+    const email    = $('#suEmail').value.trim();
+    const password = $('#suPass').value;
+    const remember = $('#suRemember').checked;
+
+    if(!name || !username || !phone || !email || !password){
+      return setLoginStatus('Please fill in all fields', 'err');
+    }
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+      return setLoginStatus('Enter a valid email address', 'err');
+    }
+    if(!/^[a-z0-9._-]+$/i.test(username)){
+      return setLoginStatus('Username may only contain letters, numbers, dot, dash or underscore', 'err');
+    }
+    if(password.length < 6){
+      return setLoginStatus('Password must be at least 6 characters', 'err');
+    }
+    if(phone.replace(/\D/g,'').length < 9){
+      return setLoginStatus('Enter a valid phone number', 'err');
+    }
+
+    const btn = $('#signupBtn');
+    btn.disabled = true;
+    setLoginStatus('Creating your organization…', 'loading');
+    try{
+      await signUpPublic({ name, username, phone, email, password, remember });
+      setLoginStatus('');
+    }catch(err){
+      console.error(err);
+      setLoginStatus(err.message || 'Sign up failed', 'err');
+    }finally{
+      btn.disabled = false;
+    }
+  });
+
+  $('#forgotBtn').addEventListener('click', async () => {
+    const value = $('#siUser').value.trim();
+    if(!value){
+      return setLoginStatus('Enter your username or email above, then tap Forgot password', 'err');
+    }
+    setLoginStatus('Sending reset link…', 'loading');
+    try{
+      await sendResetLink(value);
+      setLoginStatus('If that account exists, a reset link has been sent to your email inbox.', 'ok');
+    }catch(err){
+      setLoginStatus(err.message || 'Could not send reset link', 'err');
+    }
+  });
+}
+
+/* ============================================================
+   22. SHELL WIRING + BOOT
+   ============================================================ */
+function wireShell(){
+  $('#menuBtn').addEventListener('click', openDrawer);
+  $('#drawerClose').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', closeDrawer);
+  $('#themeBtn').addEventListener('click', toggleTheme);
+
+  const renameBtn = $('#renameBizBtn');
+  if(renameBtn){
+    renameBtn.innerHTML = icon('edit','sm');
+    renameBtn.addEventListener('click', async () => {
+      if(!isAdmin()) return toast('Only administrators can rename the business', 'err');
+      const next = prompt('Business name', DB.settings.businessName);
+      if(next === null) return;
+      const name = next.trim();
+      if(!name) return toast('Business name cannot be empty', 'err');
+      DB.settings.businessName = name;
+      persist();
+      paintBranding();
+      await pushSettings();
+      render();
+      toast('Business name updated', 'ok');
+    });
+  }
+
+  $('#logoutBtn').addEventListener('click', () => {
+    if(!confirm('Sign out of the system?')) return;
+    closeDrawer();
+    doSignOut();
+  });
+
+  $('#userChip').addEventListener('click', () => {
+    if(isAdmin()) go('settings');
+    else toast(`${session.name} · Worker`);
+  });
+
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-go]');
+    if(btn && $('#app').contains(btn)) go(btn.dataset.go);
+  });
+  document.addEventListener('keydown', e => { if(e.key === 'Escape') closeDrawer(); });
+}
+
+async function boot(){
+  DB = seedDB();
+  applyTheme(DB.settings.theme || 'dark');
+  paintBranding();
+  updateLoginHint();
+
+  wireLoginUI();
+  wireShell();
+
+  onAuthStateChanged(auth, async (fbUser) => {
+    if(fbUser){
+      if(signUpInProgress) return;
+
+      try{
+        const docSnap = await getDoc(doc(db, 'users', fbUser.uid));
+        if(!docSnap.exists()){
+          await signOut(auth);
+          setLoginStatus('No profile found for this account. Contact your administrator.', 'err');
+          return;
+        }
+        const profile = docSnap.data();
+        if(profile.active === false){
+          await signOut(auth);
+          setLoginStatus('This account has been disabled. Contact your administrator.', 'err');
+          return;
+        }
+        if(!profile.orgId){
+          await signOut(auth);
+          setLoginStatus('Your account is not linked to an organization. Please sign up again.', 'err');
+          return;
+        }
+
+        currentOrgId = profile.orgId;
+        session = {
+          id:       fbUser.uid,
+          email:    profile.email || fbUser.email || '',
+          name:     profile.name || fbUser.displayName || 'User',
+          username: profile.username || '',
+          phone:    profile.phone || '',
+          role:     profile.role || 'staff',
+          orgId:    profile.orgId
+        };
+        saveSession(session, $('#siRemember')?.checked ?? true);
+
+        loadDB();
+        await pullSettings();
+        applyTheme(DB.settings.theme || 'dark');
+        paintBranding();
+
+        SUB_STATE = await loadSubscription();
+        await syncUsersFromFirestore();
+        startApp();
+      }catch(err){
+        console.error(err);
+        setLoginStatus('Could not load your profile.', 'err');
+      }
+    }else{
+      clearSession();
+      SUB = null;
+      SUB_STATE = null;
+      applyTheme('dark');
+      paintBranding();
+      stopApp();
+    }
+  });
+}
+
+boot();
+</script>
+</body>
+</html>
