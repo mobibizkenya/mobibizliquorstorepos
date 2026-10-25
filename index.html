@@ -811,7 +811,7 @@ const BILLING = {
   graceDays:     3,
   pricePerMonth: 1500, // Production
   currency:      'KES',
-  paybill:       '1816752', // Production
+  paybill:       '1347027', // Your Till number
   accountNo:     'MOBIBIZ',
   supportPhone:  '+254 112 238 665',
   checkoutUrl:   '',
@@ -996,7 +996,7 @@ async function initiateMpesaPayment(buttonEl){
     }, 5000);
     
   } catch(err) {
-    console.error(err);
+    console.error("PAYMENT ERROR DETAILS:", err);
     toast(err.message || 'Payment failed. Check connection.', 'err');
     if(buttonEl){ 
       buttonEl.disabled = false; 
