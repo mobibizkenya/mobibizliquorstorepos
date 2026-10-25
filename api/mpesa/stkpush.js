@@ -14,6 +14,9 @@ export default async function handler(req, res) {
     ? 'https://api.safaricom.co.ke' 
     : 'https://sandbox.safaricom.co.ke';
 
+  // Force the shortcode to your Till number to prevent env variable issues
+  const shortcode = process.env.MPESA_SHORTCODE || '1347027'; 
+
   try {
     // 1. Get OAuth Token
     const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
@@ -22,21 +25,29 @@ export default async function handler(req, res) {
     });
 
     // 2. Generate Password & Timestamp
-    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
-    const password = Buffer.from(`${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
+    // Safaricom requires the timestamp to be in YYYYMMDDHHmmss format
+    const date = new Date();
+    const timestamp = date.getFullYear() +
+      ("0" + (date.getMonth() + 1)).slice(-2) +
+      ("0" + date.getDate()).slice(-2) +
+      ("0" + date.getHours()).slice(-2) +
+      ("0" + date.getMinutes()).slice(-2) +
+      ("0" + date.getSeconds()).slice(-2);
+      
+    const password = Buffer.from(`${shortcode}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
 
     // 3. Initiate STK Push
     const stkRes = await axios.post(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
-      BusinessShortCode: process.env.MPESA_SHORTCODE,
+      BusinessShortCode: shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: 'CustomerBuyGoodsOnline', 
-      Amount: amount,
+      TransactionType: 'CustomerBuyGoodsOnline', // <-- CRITICAL FIX FOR TILL NUMBER
+      Amount: Math.round(amount), // Safaricom requires whole numbers for KES
       PartyA: phone,
-      PartyB: process.env.MPESA_SHORTCODE,
+      PartyB: shortcode,          // For Till, PartyB is also the Till number
       PhoneNumber: phone,
       CallBackURL: `https://${req.headers.host}/api/mpesa/callback`,
-      AccountReference: orgId, // Identifies the organization
+      AccountReference: 'MOBIBIZ', // Till numbers don't use AccountReference the same way, but it's required
       TransactionDesc: 'POS Subscription'
     }, {
       headers: { Authorization: `Bearer ${access_token}` }
@@ -44,7 +55,13 @@ export default async function handler(req, res) {
 
     res.status(200).json({ ok: true, data: stkRes.data });
   } catch (error) {
-    console.error('STK Error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to initiate M-Pesa payment' });
+    // Log the EXACT error from Safaricom to Vercel
+    const errorData = error.response?.data || error.message;
+    console.error('SAFARICOM STK ERROR:', JSON.stringify(errorData, null, 2));
+    
+    res.status(500).json({ 
+      error: 'Failed to initiate M-Pesa payment',
+      details: errorData 
+    });
   }
 }
