@@ -666,7 +666,8 @@ const ICONS = {
   trend:'<path d="m23 6-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/>',
   lock:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   refresh:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
-  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  printer:'<path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/>'
 };
 const icon = (n, cls = '') =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[n] || ''}</svg>`;
@@ -807,12 +808,12 @@ const SUB_CACHE_KEY = 'liquorpos_sub_v1';
 const SUB_DOC = () => doc(db, 'subscriptions', currentOrgId);
 
 const BILLING = {
-  trialDays:     30,
+  trialDays:     7,
   graceDays:     3,
   pricePerMonth: 1500, // Production
   currency:      'KES',
-  paybill:       '1347027', // Your Till number
-  accountNo:     'MOBIBIZ',
+  paybill:       '1816752', // Your Till number
+  accountNo:     '', // Not applicable for Till
   supportPhone:  '+254 112 238 665',
   checkoutUrl:   '',
   payEndpoint:   '/api/mpesa/stkpush' 
@@ -930,8 +931,7 @@ function paywallHTML(){
           <b style="color:var(--gold);font-size:18px">${money(BILLING.pricePerMonth)}</b>
         </div>
         <div style="font-size:12.5px;color:var(--muted);line-height:2">
-          <div>M-Pesa Paybill: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
-          <div>Account number: <b style="color:var(--text)">${esc(BILLING.accountNo)}</b></div>
+          <div>M-Pesa Till Number: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
           <div>Support: <b style="color:var(--text)">${esc(BILLING.supportPhone)}</b></div>
         </div>
       </div>
@@ -1668,7 +1668,7 @@ function viewProducts(){
   }
   const q = productSearch.toLowerCase();
   const list = DB.products.filter(p =>
-    !q || p.name.toLowerCase().includes(q) || String(p.category || '').toLowerCase().includes(q)
+    !q || p.name.toLowerCase().includes(q) || String(p.category || '').toLowerCase().includes(q) || String(p.barcode || '').includes(q)
   );
   const editing = productEditId ? DB.products.find(p => p.id === productEditId) : null;
   const stockValue  = DB.products.reduce((a,p) => a + num(p.qty) * num(p.buyingPrice), 0);
@@ -1686,6 +1686,10 @@ function viewProducts(){
       <div class="card">
         <h3>${icon(editing ? 'edit' : 'plus','sm')} ${editing ? 'Edit Product' : 'Add New Product'}</h3>
         <form id="productForm">
+          <div class="field">
+            <label for="pBarcode">Barcode / SKU</label>
+            <input id="pBarcode" placeholder="Scan or type barcode..." value="${esc(editing?.barcode || '')}">
+          </div>
           <div class="field">
             <label for="pName">Product Name *</label>
             <input id="pName" required placeholder="e.g. Tusker Lager 500ml" value="${esc(editing?.name || '')}">
@@ -1759,7 +1763,7 @@ function viewProducts(){
       <div class="toolbar">
         <div class="search-wrap">
           ${icon('search')}
-          <input id="prodSearch" placeholder="Search products…" value="${esc(productSearch)}">
+          <input id="prodSearch" placeholder="Search by name, category or barcode…" value="${esc(productSearch)}">
         </div>
         <span class="pill grey">${list.length} shown</span>
       </div>
@@ -1767,7 +1771,7 @@ function viewProducts(){
         <table>
           <thead>
             <tr>
-              <th>Product</th><th>Category</th><th class="num">Qty</th>
+              <th>Product</th><th>Barcode</th><th>Category</th><th class="num">Qty</th>
               <th class="num">Buying</th><th class="num">Selling</th>
               <th class="num">Margin</th><th>Status</th><th></th>
             </tr>
@@ -1781,6 +1785,7 @@ function viewProducts(){
                            : '<span class="pill green">In stock</span>';
               return `<tr>
                 <td><b>${esc(p.name)}</b></td>
+                <td style="color:var(--muted);font-size:11px">${esc(p.barcode || '—')}</td>
                 <td style="color:var(--muted)">${esc(p.category || '—')}</td>
                 <td class="num">${num(p.qty)}</td>
                 <td class="num">${money(p.buyingPrice)}</td>
@@ -1796,7 +1801,7 @@ function viewProducts(){
                   </div>
                 </td>
               </tr>`;
-            }).join('') : `<tr><td colspan="8"><div class="empty">${icon('box')}<div>No products found</div></div></td></tr>`}
+            }).join('') : `<tr><td colspan="9"><div class="empty">${icon('box')}<div>No products found</div></div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1810,6 +1815,7 @@ function bindProducts(){
   $('#productForm').addEventListener('submit', e => {
     e.preventDefault();
     const data = {
+      barcode: $('#pBarcode').value.trim(),
       name: $('#pName').value.trim(),
       category: $('#pCat').value.trim(),
       qty: num($('#pQty').value),
@@ -1921,10 +1927,14 @@ function viewSales(){
       </div>
     </div>
 
-    <div class="grid g2" style="margin-bottom:16px">
+    <div class="grid ${isAdmin() ? 'g2' : ''}" style="margin-bottom:16px">
       <div class="card">
         <h3>${icon('cart','sm')} New Sale</h3>
         <form id="saleForm">
+          <div class="field">
+            <label for="scanBarcode">Scan Barcode (or type & hit Enter)</label>
+            <input id="scanBarcode" placeholder="Scan barcode here..." autofocus>
+          </div>
           <div class="row">
             <div class="field">
               <label for="sDate">Date *</label>
@@ -2008,6 +2018,7 @@ function viewSales(){
         </form>
       </div>
 
+      ${isAdmin() ? `
       <div class="card">
         <h3>${icon('chart','sm')} Sales Summary</h3>
         ${PAYMENT_METHODS.map(m => {
@@ -2026,7 +2037,7 @@ function viewSales(){
           <b>All-time Revenue</b>
           <b style="color:var(--gold);font-size:18px">${money(DB.sales.reduce((a,s) => a + num(s.total), 0))}</b>
         </div>
-      </div>
+      </div>` : ''}
     </div>
 
     <div class="card">
@@ -2047,7 +2058,7 @@ function viewSales(){
         <table>
           <thead>
             <tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">Unit Price</th>
-                <th class="num">Total</th><th>Payment</th><th>Customer</th>${canDelete ? '<th></th>' : ''}</tr>
+                <th class="num">Total</th><th>Payment</th><th>Customer</th>${canDelete ? '<th>Actions</th>' : ''}</tr>
           </thead>
           <tbody>
             ${list.length ? list.map(s => `
@@ -2061,7 +2072,12 @@ function viewSales(){
                 <td>${s.customerName
                       ? esc(s.customerName) + `<div style="font-size:11px;color:var(--muted)">${esc(s.customerPhone || '')}</div>`
                       : '—'}</td>
-                ${canDelete ? `<td><button class="btn sm danger" data-delsale="${s.id}">${icon('trash','sm')}</button></td>` : ''}
+                ${canDelete ? `<td>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn sm ghost" data-print="${s.id}" title="Print Receipt">${icon('printer','sm')}</button>
+                    <button class="btn sm danger" data-delsale="${s.id}" title="Delete">${icon('trash','sm')}</button>
+                  </div>
+                </td>` : ''}
               </tr>`).join('') : `<tr><td colspan="${canDelete ? 8 : 7}"><div class="empty">${icon('cart')}<div>No sales found</div></div></td></tr>`}
           </tbody>
         </table>
@@ -2080,6 +2096,7 @@ function bindSales(){
   const totalEl  = $('#sTotal');
   const owedIn   = $('#cOwed');
   const hint     = $('#stockHint');
+  const scanIn   = $('#scanBarcode');
 
   const selectedProduct = () => DB.products.find(p => p.id === prodSel.value);
 
@@ -2099,6 +2116,30 @@ function bindSales(){
     hint.innerHTML = `<span style="color:${over ? 'var(--danger)' : 'var(--muted)'}">
       Available: <b>${available}</b>${p.category ? ' · ' + esc(p.category) : ''}${over ? ' — not enough stock!' : ''}
     </span>`;
+  }
+
+  if(scanIn){
+    scanIn.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter') {
+        e.preventDefault();
+        const code = e.target.value.trim();
+        if(!code) return;
+        const p = DB.products.find(x => x.barcode === code);
+        if(p) {
+          if(num(p.qty) <= 0) {
+            toast(`Product "${p.name}" is out of stock!`, 'err');
+            scanIn.value = '';
+            return;
+          }
+          prodSel.value = p.id;
+          prodSel.dispatchEvent(new Event('change'));
+          scanIn.value = '';
+          qtyIn.focus();
+        } else {
+          toast('No product found with that barcode', 'err');
+        }
+      }
+    });
   }
 
   prodSel.addEventListener('change', () => {
@@ -2127,6 +2168,7 @@ function bindSales(){
     owedIn.dataset.touched = '';
     $('#sDate').value = todayISO();
     $('#cDue').value = addDays(todayISO(), 14);
+    if(scanIn) scanIn.focus();
   });
 
   $('#saleForm').addEventListener('submit', e => {
@@ -2228,6 +2270,12 @@ function bindSales(){
     });
     toast(`Sale recorded · ${money(total)} via ${method}`, 'ok');
     commit();
+    
+    // Automatically refocus the barcode scanner for the next customer
+    setTimeout(() => {
+      const newScan = $('#scanBarcode');
+      if(newScan) newScan.focus();
+    }, 100);
   });
 
   $('#salesSearch').addEventListener('input', e => {
@@ -2258,7 +2306,45 @@ function bindSales(){
       toast('Sale deleted and stock restored', 'ok');
       commit();
     }));
+
+    $$('[data-print]').forEach(b => b.addEventListener('click', () => printReceipt(b.dataset.print)));
   }
+}
+
+function printReceipt(saleId) {
+  const s = DB.sales.find(x => x.id === saleId);
+  if(!s) return;
+  const w = window.open('', '_blank', 'width=350,height=600');
+  w.document.write(`
+    <html><head><title>Receipt</title>
+    <style>
+      body { font-family: monospace; font-size: 13px; padding: 10px; width: 250px; margin: 0 auto; text-align: center; color: #000; }
+      .header { font-weight: bold; font-size: 16px; margin-bottom: 10px; text-transform: uppercase; }
+      .divider { border-top: 1px dashed #000; margin: 8px 0; }
+      .item { text-align: left; margin-bottom: 5px; display: flex; justify-content: space-between; }
+      .total { font-weight: bold; font-size: 15px; margin-top: 10px; display: flex; justify-content: space-between; }
+      .footer { margin-top: 20px; font-size: 11px; }
+    </style></head><body>
+    <div class="header">${esc(DB.settings.businessName)}</div>
+    <div>${esc(DB.settings.address || '')}</div>
+    <div>${esc(DB.settings.phone || '')}</div>
+    <div class="divider"></div>
+    <div class="item"><span>Date:</span> <span>${fmtDate(s.date)}</span></div>
+    <div class="item"><span>Receipt:</span> <span>${s.id.slice(-6).toUpperCase()}</span></div>
+    <div class="item"><span>Cashier:</span> <span>${esc(s.userName || 'System')}</span></div>
+    <div class="divider"></div>
+    <div class="item"><span>${esc(s.productName)}</span></div>
+    <div class="item"><span>${s.qty} x ${money(s.unitPrice)}</span> <span>${money(s.total)}</span></div>
+    <div class="divider"></div>
+    <div class="total"><span>TOTAL:</span> <span>${money(s.total)}</span></div>
+    <div class="item"><span>Method:</span> <span>${s.paymentMethod}</span></div>
+    ${s.customerName ? `<div class="item"><span>Customer:</span> <span>${esc(s.customerName)}</span></div>` : ''}
+    <div class="divider"></div>
+    <div class="footer">Thank you for your business!</div>
+    <script>window.print(); window.close();</script>
+    </body></html>
+  `);
+  w.document.close();
 }
 
 /* ============================================================
@@ -3253,8 +3339,7 @@ function billingCardHTML(){
       </div>
 
       <div style="font-size:12.5px;color:var(--muted);line-height:2;background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:14px">
-        <div>M-Pesa Paybill: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
-        <div>Account number: <b style="color:var(--text)">${esc(BILLING.accountNo)}</b></div>
+        <div>M-Pesa Till Number: <b style="color:var(--text)">${esc(BILLING.paybill)}</b></div>
         <div>Amount: <b style="color:var(--text)">${money(BILLING.pricePerMonth)}</b></div>
         <div>Support: <b style="color:var(--text)">${esc(BILLING.supportPhone)}</b></div>
       </div>
